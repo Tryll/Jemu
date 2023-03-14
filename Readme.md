@@ -1,7 +1,7 @@
 
 
 Goals:
- 1. Multhreaded
+ 1. Multihreaded
  2. Minimalistic device tree
  3. Clocks / Timing
 
