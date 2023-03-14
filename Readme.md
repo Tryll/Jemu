@@ -9,7 +9,6 @@ Would be nice if:
  1. Was a  npm package at some point
  2. Could be used by reference in a device specific source tree, ie. rapid device emulation development
 
- Pros:
  Greatest pro: No silly compile environment crazyness and source structure problems, like with Qemu and others.
 
 ```
