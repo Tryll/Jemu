@@ -18,7 +18,7 @@ Would be nice if:
  2. Could be used by reference in a device specific source tree, ie. rapid device emulation development
 
  Pros:
- Greatest pro: No silly compile environment crazyness as source structure problems, like with Qemu and others.
+ Greatest pro: No silly compile environment crazyness and source structure problems, like with Qemu and others.
 
 
 
