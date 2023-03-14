@@ -1,0 +1,1 @@
+<?xml version="1.0"?><!DOCTYPE target SYSTEM "gdb-target.dtd"><target><architecture>arm</architecture><xi:include href="arm-core.xml"/><xi:include href="arm-neon.xml"/><xi:include href="arm-vfp-sysregs.xml"/><xi:include href="system-registers.xml"/></target>
