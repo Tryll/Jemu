@@ -1,5 +1,4 @@
-const GdbServer = require ("./Jemu/gdb/GdbServer.js.js");
-const Memory = require('./Jemu/Memory.js');
+const GdbServer = require ("./Jemu/gdb/GdbServer.js");
 const VirtualMachine = require("./Jemu/VirtualMachine.js");
 const [ARM32, ARMV7L] = require("./Jemu/architecture/arm/armv7l.js");
 

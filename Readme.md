@@ -12,7 +12,7 @@ Would be nice if:
  Greatest pro: No silly compile environment crazyness and source structure problems, like with Qemu and others.
 
 ```
-PS C:\Repos\Jemu> node .\Jemu.js
+PS C:\Repos\Jemu> node .\Example.js
 GDB server listening on port 2456
 GDB: Client connected
 0x00000000 : 0xea00000e as 'b #imm24' with {"cond":14,"imm24":14}
@@ -32,7 +32,7 @@ SystemControlCoProcessor CP15.Handle({"cond":14,"opcode_1":1,"crn":15,"rt":2,"cp
 0x00000078 : 0xe1a0000f as 'mov<c> <Rd>, PC' with {"rd":0}
 0x0000007c : 0xe59f1294 as 'ldr<c> <Rt> [<Rn> {#+/-<imm12>}]' with {"rSrc":15,"rDst":1,"imm12":660}
 0x00000080 : 0xe0400001 as 'sub<c> <Rd>, <Rn>, <Rm>' with {"rd":0,"rn":0,"rm":1}
-0x00000084 : 0xe59f1288 as 'ldr<c> <Rt> [<Rn> {#+/-<imm12>}]' with {"rSrc":15,"rDst":1,"imm12":648}
+GDB: Client disconnected
 ```
 
 
