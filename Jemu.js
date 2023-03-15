@@ -1,6 +1,6 @@
 const GdbServer = require ("./gdb/GdbServer.js");
-const Memory = require('./core/Memory.js');
-const VirtualMachine = require("./core/VirtualMachine.js");
+const Memory = require('./system/Memory.js');
+const VirtualMachine = require("./system/VirtualMachine.js");
 const [ARM32, ARMV7L] = require("./architecture/arm/armv7l.js");
 
 

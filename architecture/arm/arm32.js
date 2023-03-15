@@ -1,4 +1,4 @@
-const CoreBase = require("../../core/CoreBase.js");
+const CoreBase = require("../../system/CoreBase.js");
 const [BitFields, BitSet,BitClear] = require("../../helpers/BitFields.js");
 const [SystemControlCoprocessor] = require ('./SystemControlCoprocessor.js');
 

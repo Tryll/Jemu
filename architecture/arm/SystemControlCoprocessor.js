@@ -1,4 +1,4 @@
-const CoreBase = require("../../core/CoreBase.js");
+const CoreBase = require("../../system/CoreBase.js");
 
 class SystemControlCoprocessor {
     static RegisterMap = {
