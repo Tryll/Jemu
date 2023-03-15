@@ -1,22 +1,36 @@
 const fs = require('fs');
 const net = require('net');
-const GdbProtocolParser = require('./GdbProtocolParser');
-const BreakpointHandler = require('../core/BreakpointHandler.js');
+const GdbProtocolParser = require('./GdbProtocolParser.js');
 
 const TARGET_SIGTRAP=5
 
 
 //https://ftp.gnu.org/old-gnu/Manuals/gdb/html_node/gdb_129.html
+// 01 is thread id, TARGET_SIGINT = 2, TARGET_SIGTRAP = 5 
+// https://android.googlesource.com/platform/external/qemu/+/3026693afde60618212d0c1db03466535af9d2be/gdbstub.c
+
 
 
 class GdbServer {
+  static TRACE_CLIENTS = 1;
+  static TRACE_INCOMMING = 2;
+  static TRACE_OUTGOING  = 4;
+  static TRACE_COMMANDS  = 8;
+  static TRACE_ALL  = 0xf;
   constructor( ) {
-    this.disableTrace();
+    this.enableTrace();
   }
 
-  enableTrace() {this.traceEnabled=null;}
-  disableTrace() {this.traceEnabled=false;}
+  enableTrace(flags = GdbServer.TRACE_CLIENTS) {this.traceFlags=flags;}
+  disableTrace() {this.traceFlags=0;}
 
+  trace(msg, requireFlag) {
+    if (this.traceFlags & requireFlag) console.log(msg);
+  }
+
+  traceDir(msg, requireFlag) {
+    if (this.traceFlags & requireFlag) console.log(JSON.stringify(msg));
+  }
 
   setup(machine, port = 2456) {
     this.machine=machine;
@@ -25,19 +39,19 @@ class GdbServer {
     this.gdbThreadSelect=1;
 
     this.server = net.createServer((socket) => {
-      console.log( 'Client connected');
+      this.trace('Client connected', GdbServer.TRACE_CLIENTS);
    
       // create parser for this socket
       const parser = new GdbProtocolParser(socket);
       // handle incoming packets from this socket
       parser.on('packet', (packet) => {
-        (this.traceEnabled) ?? console.log(`gdb: ${packet.raw}`);
-        (this.traceEnabled) ?? console.dir(packet);
+        this.trace(`gdb: ${packet.raw}`, GdbServer.TRACE_INCOMMING);
+        this.traceDir(packet, GdbServer.TRACE_INCOMMING);
         switch (packet.type) {
           case 'g':
             // read general purpose registers, PSR = 0x400001D3 here rest is 0
             
-            var cpu = this.machine.core[this.gdbThreadSelect-1];
+            var cpu = this.machine.cores[this.gdbThreadSelect-1];
             var regdump="";
             for(var i =0;i<cpu.regs.length; i++) {
               const buf = Buffer.alloc(4);
@@ -80,10 +94,18 @@ class GdbServer {
             this.memory.writeBytes(writeAddr,bytes);
             this.sendPacket(socket,"OK","+");
             break;
-          case 'Z':
           case 'z':
-            (this.traceEnabled) ?? console.log("handle breapoint ");
-            (this.traceEnabled) ?? console.dir(packet);
+            this.trace("Remove breakpoint ",GdbServer.TRACE_COMMANDS);
+            this.traceDir(packet,GdbServer.TRACE_COMMANDS);
+            var [bpType, bpAddress, bpLen] = packet.command.split(",");
+            this.machine.removeBreakpoint(bpType, parseInt(bpAddress,16), bpLen);
+            this.sendPacket(socket,"OK","+");
+            break;
+          case 'Z':          
+            this.trace("Insert breakpoint ",GdbServer.TRACE_COMMANDS);
+            this.traceDir(packet,GdbServer.TRACE_COMMANDS);
+            var [bpType, bpAddress, bpLen] = packet.command.split(",");
+            this.machine.addBreakpoint(bpType, parseInt(bpAddress,16), bpLen);
             this.sendPacket(socket,"OK","+");
             break;
           case '?':
@@ -96,7 +118,7 @@ class GdbServer {
                 this.sendPacket(socket, "OK","+");  
                 break;
               }
-              (this.traceEnabled) ?? console.log(`Unknown H command: ${packet.command}`);
+              this.trace(`Unknown H command: ${packet.command}`, GdbServer.TRACE_COMMANDS);
               
               break;
           case '!':
@@ -106,34 +128,60 @@ class GdbServer {
           case 'v':
                 // Machine operations! https://sourceware.org/gdb/onlinedocs/gdb/Packets.html#Packets
             if (packet.command=="Cont?") {
-              (this.traceEnabled) ?? console.log( "continue");
+              this.trace("continue", GdbServer.TRACE_COMMANDS);
               // +$vCont;c;C;s;S#62
               this.sendPacket(socket,"vCont;c;C;s;S","+"); // supported commands
               break;
             }
             if (packet.command=="Cont") {  //Step - //+$vCont;s#b8 response +$T05thread:01;#07
               if (packet.args.s) {
-
                 var thread=packet.args.s;
 
-                (this.traceEnabled) ?? console.log("Stepping thread "+thread);
+                this.trace("VM Step #"+thread, GdbServer.TRACE_COMMANDS);
                 this.gdbThreadSelect=thread;
                 var OKorNOT = this.machine.step(thread);
                 
                 // S for STEP s:XX threadID
               
-                this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+thread.toString(16).padStart(2, '0'),"+");   // 01 is thread id, TARGET_SIGINT = 2, TARGET_SIGTRAP = 5 https://android.googlesource.com/platform/external/qemu/+/3026693afde60618212d0c1db03466535af9d2be/gdbstub.c
+                this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+this.gdbThreadSelect.toString(16).padStart(2, '0'),"+");   
                 //+$T02thread:01
+                break;
+              } else {
+                // continuation;
+                this.trace("VM Run",GdbServer.TRACE_COMMANDS);
+               
+                try {
+                  this.machine.continue();
+                } catch(error) {
+                  this.traceDir(error,GdbServer.TRACE_COMMANDS);
+                  this.gdbThreadSelect=parseInt(error.core)+1;
+                  this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+(this.gdbThreadSelect).toString(16).padStart(2, '0'),"+");  
+                  break;
+                }
+                
+                this.sendPacket(socket, "OK","+");
+
+
+                // if no immediate return send "+"
+                // if bp reached send message:
+                // this.sendPacket(socket,"T05thread:01","+");
+                
+                //thread=1;
+                /*this.gdbThreadSelect=thread;
+                var OKorNOT = this.machine.step(thread);
+                this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+thread.toString(16).padStart(2, '0'),"+");   */
+
+                //this.machine.continue();
+                //this.sendPacket(socket, "OK","+");
+                break;
               }
-              
-              break;
             }
 
             this.sendPacket(socket,"","+");
             break;
           default:
             if (packet.type !='') {
-              console.log(`Unknown packet type:  ${packet.type}`);
+              this.trace(`Unknown packet type:  ${packet.type}`, GdbServer.TRACE_INCOMMING);
             }
             break;
         }
@@ -141,7 +189,7 @@ class GdbServer {
 
 
       socket.on('end', () => {
-        console.log('Client disconnected');
+        this.trace('Client disconnected', GdbServer.TRACE_CLIENTS);
       });
     });
   }
@@ -180,7 +228,7 @@ class GdbServer {
           case 'Xfer':
             if (packet.args[0]=="features" && packet.args[1]=="read") {
               try {
-                (this.traceEnabled) ?? console.log("Reading "+`architecture\\arm\\schema\\${packet.args[2]}`);
+                this.trace("Reading "+`architecture\\arm\\schema\\${packet.args[2]}`, GdbServer.TRACE_COMMANDS);
                 var schema= fs.readFileSync(`architecture\\arm\\schema\\${packet.args[2]}`, 'utf8');
                 var schemaPart=packet.args[3].split(",");
                 var start = parseInt(schemaPart[0],16);
@@ -188,7 +236,7 @@ class GdbServer {
                 var mode="l";
                 if (start > schema.length) {
           
-                  (this.traceEnabled) ?? console.log("seeking after file length");
+                  this.trace ("seeking after file length", GdbServer.TRACE_COMMANDS);
                   this.sendPacket(socket, "-");
                   break;
                 }
@@ -199,22 +247,22 @@ class GdbServer {
                   mode="m";
                 }
                 var buffer=schema.substring(start,length+start);
-                (this.traceEnabled) ?? console.log(`got ${start} and ${length} fetched ${buffer.length} from ${schema.length}`);
+                this.trace(`got ${start} and ${length} fetched ${buffer.length} from ${schema.length}`,GdbServer.TRACE_COMMANDS);
                 this.sendPacket(socket,mode+buffer,"+");
                 break;
               } catch (err) {
-                (this.traceEnabled) ?? console.log(err);
+                this.trace(err,GdbServer.TRACE_COMMANDS);
                 this.sendPacket(socket, "-");
               }
             }
-            (this.traceEnabled) ?? console.log("Unknown Xfer request ");
-            (this.traceEnabled) ?? console.dir(packet);
+            this.trace("Unknown Xfer request ",GdbServer.TRACE_COMMANDS);
+            this.traceDir(packet,GdbServer.TRACE_COMMANDS);
             break;
           case 'Attached':
             this.sendPacket(socket,'+');
             break;
           default:
-            (this.traceEnabled) ?? console.log("Unknown query: "+packet.command);
+            this.trace("Unknown query: "+packet.command,GdbServer.TRACE_COMMANDS);
             this.sendPacket(socket,'-');
             break;
         }
@@ -228,7 +276,7 @@ class GdbServer {
         
         const packetWithChecksum = Buffer.from(`${prefix}$${payload}#${checksumStr}`);
         
-        (this.traceEnabled) ?? console.log(`sending '${packetWithChecksum}'`);
+        this.trace(`sending '${packetWithChecksum}'`, GdbServer.TRACE_OUTGOING);
         socket.write(packetWithChecksum);
       }
     

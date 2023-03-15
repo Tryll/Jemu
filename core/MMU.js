@@ -1,7 +1,8 @@
 const Memory = require("./Memory.js");
 
 class MMU {
-    constructor(memoryMap, endianness) {
+    constructor(machine,  memoryMap, endianness) {
+        this.machine=machine;
         this.memoryMap=memoryMap;
         this.segments = [];
         for (let i = 0; i < memoryMap.length; i++) {
@@ -55,9 +56,21 @@ class MMU {
         throw new Error(`No segment found for address: 0x${address.toString(16)}`);
     }
 
+    doBreakPointCheck(address) {
+        if (this.machine.state == 'run') {
+            for (var bpId in this.machine.BreakPoints) {
+                var bp =this.machine.BreakPoints[bpId];
+                if (bp.address == address) {
+                    throw({breakpoint:bp});
+                }
+            }
+        }
+    }
 
 
     readByte(address) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('r'))  {
             throw new Error(`No read permission for address: 0x${address.toString(16)}`);
@@ -67,6 +80,8 @@ class MMU {
     }
 
     writeByte(address, value) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('w')) {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);
@@ -76,6 +91,8 @@ class MMU {
     }
 
     readWord(address) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('r')) {
             throw new Error(`No read permission for address: 0x${address.toString(16)}`);
@@ -84,6 +101,8 @@ class MMU {
     }
 
     writeWord(address, value) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('w')) {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);
@@ -93,6 +112,8 @@ class MMU {
     }
 
     readDword(address) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('r')) {
             throw new Error(`No read permission for address: 0x${address.toString(16)}`);
@@ -103,6 +124,8 @@ class MMU {
 
 
     writeDword(address, value) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('w')) {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);
@@ -113,6 +136,8 @@ class MMU {
 
 
     readBytes(address, length) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('r')) {
             throw new Error(`No read permission for address: 0x${address.toString(16)}`);
@@ -123,6 +148,8 @@ class MMU {
 
 
     writeBytes(address, buffer) {
+        this.doBreakPointCheck(address);
+
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('w')) {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);

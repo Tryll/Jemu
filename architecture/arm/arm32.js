@@ -1,5 +1,6 @@
+const CoreBase = require("../../core/CoreBase.js");
 const [BitFields, BitSet,BitClear] = require("../../helpers/BitFields.js");
-
+const [SystemControlCoprocessor] = require ('./SystemControlCoprocessor.js');
 
 var APSR_FIELDS = {
   N: 31,
@@ -16,7 +17,13 @@ var APSR_FIELDS = {
 };
 
 
-class ARM32 {
+// wild JS trick to turn 32bit javascript value into unsigned 32 bit
+function unsigned(value) {
+  return value >>> 0;
+}
+
+
+class ARM32 extends CoreBase  {
   static RegisterMap = {
     "R0":0, "R1":1, "R2":2, "R3":3, "R4":4, "R5":5, "R6":6, "R7":7,
     "R8":8, "R9":9, "R10":10, "R11":11, "R12":12, "SP":13, "LR":14, "PC":15,
@@ -24,23 +31,17 @@ class ARM32 {
   };
   
   constructor(name, platform, memory) {
-    this.name=name;
-    this.mode="arm";
+    super (name, platform, memory);
 
-    this.platform = platform;
-    this.opcodes = platform.opcodes;
-
-    this.memory=memory;
-    
-    // initialize 16 registers
+    // initialize registers
     this.regs = new Uint32Array(ARM32.RegisterMap.APSR+1);
+    this.mapRegisters(ARM32.RegisterMap);    
 
-    // Registers: getters and setters
-    // (class instance).SP get and set into this.regs automatically
-    for (let i = 0; i < Object.keys(ARM32.RegisterMap).length; i++) {
-      Object.defineProperty(this,Object.keys(ARM32.RegisterMap)[i], {get() { return this.regs[i];}, set(value) {this.regs[i] = value;}});
-    }
+    // initialize basic coprocessors
+    this.coprocessors = new Array(16);
+    this.coprocessors[15] = new SystemControlCoprocessor(this, memory);
     
+    // bind flags to register APSR (16)
     this.flags = BitFields.ByRef(this, "APSR", APSR_FIELDS);
 
     // set initial values for PC and SP
@@ -48,11 +49,17 @@ class ARM32 {
     this.PC=0;
     this.APSR = 0x400001D3;
 
+    this.mode="arm";
+
   }
 
   // Perform single Step: Evaluate Instruction
   step() {
+    // if core is disabled return
+    if (!this.active) return;
+
     if (this.mode=="arm") {
+    
       var opcode=this.memory.readDword(this.PC);
       var found=false;
 
@@ -62,7 +69,7 @@ class ARM32 {
         var opcodeDef=this.opcodes[opcodeId];
         
         // Find matching opcode handler 
-        if ( (opcode & opcodeDef.mask) == opcodeDef.match) {
+        if ( unsigned(opcode & opcodeDef.mask) == opcodeDef.match) {
 
           // decode opcode
           var decoded=BitFields.Parse(opcode, opcodeDef.decoder);
@@ -76,10 +83,13 @@ class ARM32 {
       }
     
       if(!found) {
-        console.log(`ARM32: 0x${opcode.toString(16)} 0b${opcode.toString(12)} - unknown instruction`);
+        var msg=`0x${this.PC.toString(16).padStart(8,'0')} : 0x${opcode.toString(16)} - unknown instruction`;
+        console.log(msg);
+        throw(msg);
       }
     }
   }
+
 
   // Barrel shift operation
   barrelShift(value, shiftType, shiftAmount) {

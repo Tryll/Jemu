@@ -38,7 +38,7 @@ vm.loadFileToAddress(0, "c:\\data\\ios\\emu\\securerom");
 
 var gdb = new GdbServer();
 gdb.setup(vm);
-//gdb.enableTrace();
+//gdb.enableTrace(GdbServer.TRACE_ALL);
 gdb.listen();
 
 
