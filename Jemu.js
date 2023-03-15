@@ -1,4 +1,4 @@
-const GdbServer = require ("./gdb/gdbServer.js");
+const GdbServer = require ("./gdb/GdbServer.js");
 const Memory = require('./core/Memory.js');
 const VirtualMachine = require("./core/VirtualMachine.js");
 const [ARM32, ARMV7L] = require("./architecture/arm/armv7l.js");
@@ -36,8 +36,7 @@ const machineLayoutTree = {
 var vm = new VirtualMachine(machineLayoutTree);
 vm.loadFileToAddress(0, "c:\\data\\ios\\emu\\securerom");
 
-var gdb = new GdbServer();
-gdb.setup(vm);
+var gdb = new GdbServer(vm, 2456, GdbServer.TRACE_CLIENTS);
 //gdb.enableTrace(GdbServer.TRACE_ALL);
 gdb.listen();
 

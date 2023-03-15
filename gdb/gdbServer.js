@@ -1,6 +1,6 @@
 const fs = require('fs');
 const net = require('net');
-const GdbProtocolParser = require('./GdbProtocolParser.js');
+const GdbProtocolBase = require('./GdbProtocolBase.js');
 
 const TARGET_SIGTRAP=5
 
@@ -12,274 +12,341 @@ const TARGET_SIGTRAP=5
 
 
 class GdbServer {
+
+
   static TRACE_CLIENTS = 1;
   static TRACE_INCOMMING = 2;
   static TRACE_OUTGOING  = 4;
   static TRACE_COMMANDS  = 8;
   static TRACE_ALL  = 0xf;
-  constructor( ) {
-    this.enableTrace();
-  }
 
   enableTrace(flags = GdbServer.TRACE_CLIENTS) {this.traceFlags=flags;}
   disableTrace() {this.traceFlags=0;}
 
-  trace(msg, requireFlag) {
-    if (this.traceFlags & requireFlag) console.log(msg);
-  }
 
-  traceDir(msg, requireFlag) {
-    if (this.traceFlags & requireFlag) console.log(JSON.stringify(msg));
-  }
-
-  setup(machine, port = 2456) {
+  constructor(machine, port = 2456, traceFlags = GdbServer.TRACE_CLIENTS ) {
     this.machine=machine;
     this.memory=machine.MMU;
     this.port = port;    
     this.gdbThreadSelect=1;
 
+    this.enableTrace(traceFlags);
+
+    this.GdbCommandHandlers = {
+      'g': this.handleGeneralRegisters.bind(this),
+      'p': this.handleReadRegister.bind(this),
+      'q': this.handleQueryPacket.bind(this),
+      'm': this.handleReadMemory.bind(this),
+      'M': this.handleWriteMemory.bind(this),
+      'z': this.handleRemoveBreakpoint.bind(this),
+      'Z': this.handleInsertBreakpoint.bind(this),
+      '?': this.handleStopReason.bind(this),
+      'H': this.handleSetThread.bind(this),
+      'v': this.handleMachineOperation.bind(this),
+    };
+
+  }
+
+  listen() {
     this.server = net.createServer((socket) => {
       this.trace('Client connected', GdbServer.TRACE_CLIENTS);
-   
-      // create parser for this socket
-      const parser = new GdbProtocolParser(socket);
-      // handle incoming packets from this socket
-      parser.on('packet', (packet) => {
-        this.trace(`gdb: ${packet.raw}`, GdbServer.TRACE_INCOMMING);
-        this.traceDir(packet, GdbServer.TRACE_INCOMMING);
-        switch (packet.type) {
-          case 'g':
-            // read general purpose registers, PSR = 0x400001D3 here rest is 0
-            
-            var cpu = this.machine.cores[this.gdbThreadSelect-1];
-            var regdump="";
-            for(var i =0;i<cpu.regs.length; i++) {
-              const buf = Buffer.alloc(4);
-              buf.writeUInt32LE(cpu.regs[i], 0);
-              regdump+=buf.toString('hex').padStart(8,0);
-            }
-            this.sendPacket(socket,regdump,"+");
-            //this.sendPacket(socket,"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d3010040","+");
-            //$00000000
-           
-            break;
-          case 'p':
-            if (packet.command=="f") { // get program counter 
-              this.sendPacket(socket,"00000000","+");
-              break;
-            }
-            // parse register from command and return register value
-            this.sendPacket(socket,"00000000","+");
-            break;
-          
-          case 'q':
-            this.handleQueryPacket(socket,packet);
-            break;
 
-          case 'm':
-            // read memory
-            const [addrStr, lengthStr] = packet.command.split(',');
-            const addr = parseInt(addrStr, 16);
-            const length = parseInt(lengthStr, 16);
-            const hexData = Buffer.from(this.memory.readBytes(addr,length)).toString('hex');
-            this.sendPacket(socket,hexData,"+");
-            break;
+      // Set up the onData event handler
+      socket.on('data', (data) => {
+        this.trace(`gdb incomming: ${data}`, GdbServer.TRACE_INCOMMING);
 
-          case 'M':
-            // write memory
-            const [writeAddrStr, writeLengthStr] = packet.command.split(',');
-            const writeAddr = parseInt(writeAddrStr, 16);
-            const writeLength = parseInt(writeLengthStr, 16);
-            const bytes = Buffer.from(packet.args[0],"hex");
-            this.memory.writeBytes(writeAddr,bytes);
-            this.sendPacket(socket,"OK","+");
-            break;
-          case 'z':
-            this.trace("Remove breakpoint ",GdbServer.TRACE_COMMANDS);
-            this.traceDir(packet,GdbServer.TRACE_COMMANDS);
-            var [bpType, bpAddress, bpLen] = packet.command.split(",");
-            this.machine.removeBreakpoint(bpType, parseInt(bpAddress,16), bpLen);
-            this.sendPacket(socket,"OK","+");
-            break;
-          case 'Z':          
-            this.trace("Insert breakpoint ",GdbServer.TRACE_COMMANDS);
-            this.traceDir(packet,GdbServer.TRACE_COMMANDS);
-            var [bpType, bpAddress, bpLen] = packet.command.split(",");
-            this.machine.addBreakpoint(bpType, parseInt(bpAddress,16), bpLen);
-            this.sendPacket(socket,"OK","+");
-            break;
-          case '?':
-            this.sendPacket(socket,"T05thread:01","+");
-            break;
-          case 'H':
-              if (packet.command[0]=='g') {
-                // set active thread / core 
-                var thread=packet.command.slice(1);
-                this.sendPacket(socket, "OK","+");  
-                break;
-              }
-              this.trace(`Unknown H command: ${packet.command}`, GdbServer.TRACE_COMMANDS);
-              
-              break;
-          case '!':
-            // reset machine
-            this.sendPacket(socket, "OK","+");
-            break;
-          case 'v':
-                // Machine operations! https://sourceware.org/gdb/onlinedocs/gdb/Packets.html#Packets
-            if (packet.command=="Cont?") {
-              this.trace("continue", GdbServer.TRACE_COMMANDS);
-              // +$vCont;c;C;s;S#62
-              this.sendPacket(socket,"vCont;c;C;s;S","+"); // supported commands
-              break;
-            }
-            if (packet.command=="Cont") {  //Step - //+$vCont;s#b8 response +$T05thread:01;#07
-              if (packet.args.s) {
-                var thread=packet.args.s;
+        GdbProtocolBase.Parse(data, (packet) => {
+          this.trace(`gdb incomming parsed: ${JSON.stringify(packet)}`, GdbServer.TRACE_INCOMMING);
+          const handler = this.GdbCommandHandlers[packet.type];
+          if (handler) {
+            handler(socket, packet);
+          } else {
+            this.trace(`Unknown packet type:  ${packet.type}`, GdbServer.TRACE_INCOMMING);
+          }
+        })
 
-                this.trace("VM Step #"+thread, GdbServer.TRACE_COMMANDS);
-                this.gdbThreadSelect=thread;
-                var OKorNOT = this.machine.step(thread);
-                
-                // S for STEP s:XX threadID
-              
-                this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+this.gdbThreadSelect.toString(16).padStart(2, '0'),"+");   
-                //+$T02thread:01
-                break;
-              } else {
-                // continuation;
-                this.trace("VM Run",GdbServer.TRACE_COMMANDS);
-               
-                try {
-                  this.machine.continue();
-                } catch(error) {
-                  this.traceDir(error,GdbServer.TRACE_COMMANDS);
-                  this.gdbThreadSelect=parseInt(error.core)+1;
-                  this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+(this.gdbThreadSelect).toString(16).padStart(2, '0'),"+");  
-                  break;
-                }
-                
-                this.sendPacket(socket, "OK","+");
-
-
-                // if no immediate return send "+"
-                // if bp reached send message:
-                // this.sendPacket(socket,"T05thread:01","+");
-                
-                //thread=1;
-                /*this.gdbThreadSelect=thread;
-                var OKorNOT = this.machine.step(thread);
-                this.sendPacket(socket,"T"+ (TARGET_SIGTRAP).toString(16).padStart(2,"0") +"thread:"+thread.toString(16).padStart(2, '0'),"+");   */
-
-                //this.machine.continue();
-                //this.sendPacket(socket, "OK","+");
-                break;
-              }
-            }
-
-            this.sendPacket(socket,"","+");
-            break;
-          default:
-            if (packet.type !='') {
-              this.trace(`Unknown packet type:  ${packet.type}`, GdbServer.TRACE_INCOMMING);
-            }
-            break;
-        }
       });
-
 
       socket.on('end', () => {
         this.trace('Client disconnected', GdbServer.TRACE_CLIENTS);
       });
     });
+
+    this.server.listen(this.port, () => {
+      console.log(`GDB server listening on port ${this.port}`);
+    });
   }
 
 
+  handleGeneralRegisters(socket, packet) {
+    this.trace(`GeneralRegisters ${this.gdbThreadSelect}`, GdbServer.TRACE_COMMANDS);
+    const cpu = this.machine.cores[this.gdbThreadSelect-1];
+    let regdump = "";
+  
+    for (let i = 0; i < cpu.regs.length; i++) {
+      const buf = Buffer.alloc(4);
+      buf.writeUInt32LE(cpu.regs[i], 0);
+      regdump += buf.toString('hex').padStart(8, 0);
+    }
+  
+    GdbProtocolBase.Send(socket, regdump, "+");
+  }
 
-    listen() {
-        this.server.listen(this.port, () => {
-          console.log(`GDB server listening on port ${this.port}`);
-        });
+
+  handleReadRegister(socket, packet) {
+    const registerIndex = parseInt(packet.command, 16);
+    this.trace(`ReadRegister ${registerIndex}`, GdbServer.TRACE_COMMANDS);
+  
+    if (registerIndex === 15) { // Get program counter
+      GdbProtocolBase.Send(socket, "00000000", "+");
+      return;
+    }
+  
+    const cpu = this.machine.cores[this.gdbThreadSelect - 1];
+    if (registerIndex >= 0 && registerIndex < cpu.regs.length) {
+      const registerValue = cpu.regs[registerIndex];
+      const buf = Buffer.alloc(4);
+      buf.writeUInt32LE(registerValue, 0);
+      const hexValue = buf.toString('hex').padStart(8, 0);
+      GdbProtocolBase.Send(socket, hexValue, "+");
+    } else {
+      GdbProtocolBase.Send(socket, "00000000", "+");
+    }
+  }
+
+
+  handleReadMemory(socket, packet) {
+    const [addrStr, lengthStr] = packet.command.split(',');
+    const addr = parseInt(addrStr, 16);
+    const length = parseInt(lengthStr, 16);
+    this.trace(`ReadMemory 0x${addr.toString(16)}, len 0x${length.toString(16)}`, GdbServer.TRACE_COMMANDS);
+
+    try {
+      const memoryData = this.memory.readBytes(addr, length);
+      const hexData = Buffer.from(memoryData).toString('hex');
+      GdbProtocolBase.Send(socket, hexData, "+");
+    } catch (error) {
+      this.trace(`Error reading memory: ${error}`, GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "E01", "+"); // Send an error response
+    }
+  }
+
+  handleWriteMemory(socket, packet) {
+    const [writeAddrStr, writeLengthStr] = packet.command.split(',');
+    const writeAddr = parseInt(writeAddrStr, 16);
+    const writeLength = parseInt(writeLengthStr, 16);
+    const bytes = Buffer.from(packet.args[0], "hex");
+    this.trace(`WriteMemory 0x${writeAddr.toString(16)}, len 0x${writeLength.toString(16)}`, GdbServer.TRACE_COMMANDS);
+
+    try {
+      this.memory.writeBytes(writeAddr, bytes);
+      GdbProtocolBase.Send(socket, "OK", "+");
+    } catch (error) {
+      this.trace(`Error writing memory: ${error}`, GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "E01", "+"); // Send an error response
+    }
+  }
+
+  handleRemoveBreakpoint(socket, packet) {
+    const [bpType, bpAddress, bpLen] = packet.command.split(",");
+    const breakpointAddress = parseInt(bpAddress, 16);
+    this.trace(`RemoveBreakpoint 0x${breakpointAddress.toString(16)}`, GdbServer.TRACE_COMMANDS);
+
+    try {
+      this.machine.removeBreakpoint(bpType, breakpointAddress, bpLen);
+      GdbProtocolBase.Send(socket, "OK", "+");
+    } catch (error) {
+      this.trace(`Error removing breakpoint: ${error}`, GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "E01", "+"); // Send an error response
+    }
+  }
+
+  handleInsertBreakpoint(socket, packet) {
+    const [bpType, bpAddress, bpLen] = packet.command.split(",");
+    const breakpointAddress = parseInt(bpAddress, 16);
+    this.trace(`InsertBreakpoint 0x${breakpointAddress.toString(16)}`, GdbServer.TRACE_COMMANDS);
+
+    try {
+      this.machine.addBreakpoint(bpType, breakpointAddress, bpLen);
+      GdbProtocolBase.Send(socket, "OK", "+");
+    } catch (error) {
+      this.trace(`Error inserting breakpoint: ${error}`, GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "E01", "+"); // Send an error response
+    }
+  }
+  
+  handleStopReason(socket, packet) {
+    this.trace(`GetStopReason`, GdbServer.TRACE_COMMANDS);
+    const stopSignal = TARGET_SIGTRAP;
+    const threadId = this.gdbThreadSelect;
+    const stopReason = `T${stopSignal.toString(16).padStart(2, "0")}thread:${threadId.toString(16).padStart(2, "0")}`;
+    GdbProtocolBase.Send(socket, stopReason, "+");
+  }
+  
+  handleSetThread(socket, packet) {
+
+    const operation = packet.command[0];
+    const threadId = parseInt(packet.command.slice(1), 16);
+    this.trace(`SetThread (${operation}) ${threadId}`, GdbServer.TRACE_COMMANDS);
+
+    if (operation === "g") {
+      // Set active thread / core
+      this.gdbThreadSelect = threadId+1;  // why would clients send in 0?
+      GdbProtocolBase.Send(socket, "OK", "+");
+    } else {
+      this.trace(`Unknown H command: ${packet.command}`, GdbServer.TRACE_COMMANDS);
+    }
+  }
+
+  handleMachineOperation(socket, packet) {
+    this.trace(`MachineOperation (${packet.command})`, GdbServer.TRACE_COMMANDS);
+
+    if (packet.command === "Cont?") {
+      this.trace("continue", GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "vCont;c;C;s;S", "+"); // supported commands
+      return;
+    }
+  
+    if (packet.command === "Cont") {
+      if (packet.args.s) {
+        const thread = packet.args.s;
+        this.trace(`VM Step #${thread}`, GdbServer.TRACE_COMMANDS);
+        this.gdbThreadSelect = thread;
+        const OKorNOT = this.machine.step(thread);
+        GdbProtocolBase.Send(socket, `T${(TARGET_SIGTRAP).toString(16).padStart(2, "0")}thread:${this.gdbThreadSelect.toString(16).padStart(2, '0')}`, "+");
+        return;
+      } else {
+        this.trace("VM Run", GdbServer.TRACE_COMMANDS);
+        try {
+          this.machine.continue();
+        } catch (error) {
+          this.traceDir(error, GdbServer.TRACE_COMMANDS);
+          this.gdbThreadSelect = parseInt(error.core) + 1;
+          GdbProtocolBase.Send(socket, `T${(TARGET_SIGTRAP).toString(16).padStart(2, "0")}thread:${(this.gdbThreadSelect).toString(16).padStart(2, '0')}`, "+");
+          return;
+        }
+        GdbProtocolBase.Send(socket, "OK", "+");
+        return;
+      }
+    }
+  
+    GdbProtocolBase.Send(socket, "", "+");
+  }
+  
+  handleQueryPacket(socket, packet) {
+    this.trace(`QueryPacket (${packet.command})`, GdbServer.TRACE_COMMANDS);
+    if (packet.command === "Supported") {
+      const features = [
+        "PacketSize=1024",
+        "QStartNoAckMode+",
+        "qXfer:features:read+",
+        "qXfer:memory-map:read+",
+        "multiprocess+",
+        "vContSupported+",
+        "QThreadEvents+",
+      ];
+      GdbProtocolBase.Send(socket, features.join(";"), "+");
+      return;
+    }
+  
+    if (packet.command === "C") {
+      GdbProtocolBase.Send(socket, `QC${this.gdbThreadSelect.toString(16).padStart(2, "0")}`, "+");
+      return;
+    }
+  
+    if (packet.command === "Attached") {
+      this.trace("qAttached", GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "1", "+");
+      return;
+    }
+  
+    if (packet.command === "TStatus") {
+      this.trace("qTStatus", GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "T0;tnotrun:0", "+");
+      return;
+    }
+  
+    if (packet.command === "fThreadInfo") {
+      const cores = this.machine.cores;
+      let response = "m";
+      for (let i = 0; i < cores.length; i++) {
+        response += (i + 1).toString(16).padStart(2, "0");
+        if (i < cores.length - 1) response += ",";
+      }
+      GdbProtocolBase.Send(socket, response, "+");
+      return;
+    }
+  
+    if (packet.command === "sThreadInfo") {
+      GdbProtocolBase.Send(socket, "l", "+");
+      return;
     }
 
+    if (packet.command === "qThreadExtraInfo") {
+      const threadId = parseInt(packet.args[0], 16);
+      if (threadId >= 1 && threadId <= this.machine.cores.length) {
+        const threadName = `Core ${threadId}`;
+        const hexThreadName = Buffer.from(threadName).toString('hex');
+        GdbProtocolBase.send(socket, hexThreadName);
+      } else {
+        GdbProtocolBase.send(socket, "E01"); // Return an error if the thread ID is not valid
+      }
+      return;
+    }
 
-    async handleQueryPacket(socket, packet) {
-        switch (packet.command) { //+$qfThreadInfo#bb => +$m01#ce
-          case 'fThreadInfo':     // Query number of CPU's / Cores 
-            this.sendPacket(socket,"m01","+");
-            break;
-          case 'sThreadInfo': //+$qsThreadInfo#c8 => +$m02#cf, then +$l#6c when no more
-            if (!this.threadInfoSent) {
-              this.threadInfoSent=true;
-              this.sendPacket(socket,"m02","+");
-            } else {
-              this.threadInfoSent=false;
-              this.sendPacket(socket,"l","+");
-            }
-            
-            break;
-            
-          case 'C': // return current thread Id
-            this.sendPacket(socket,"QC"+this.gdbThreadSelect.toString(16).padStart(2, '0'),"+");
-            break;
-          case 'Supported':
-            this.sendPacket(socket,"PacketSize=1000;qXfer:features:read+;vContSupported+;multiprocess+","+");
-            break;
-          case 'Xfer':
-            if (packet.args[0]=="features" && packet.args[1]=="read") {
-              try {
-                this.trace("Reading "+`architecture\\arm\\schema\\${packet.args[2]}`, GdbServer.TRACE_COMMANDS);
-                var schema= fs.readFileSync(`architecture\\arm\\schema\\${packet.args[2]}`, 'utf8');
-                var schemaPart=packet.args[3].split(",");
-                var start = parseInt(schemaPart[0],16);
-                var length = parseInt(schemaPart[1],16);
-                var mode="l";
-                if (start > schema.length) {
-          
-                  this.trace ("seeking after file length", GdbServer.TRACE_COMMANDS);
-                  this.sendPacket(socket, "-");
-                  break;
-                }
-                if ((start+length)> schema.length) {
-                  length=schema.length-start;
-                } else 
-                if ((start+length) < schema.length) {
-                  mode="m";
-                }
-                var buffer=schema.substring(start,length+start);
-                this.trace(`got ${start} and ${length} fetched ${buffer.length} from ${schema.length}`,GdbServer.TRACE_COMMANDS);
-                this.sendPacket(socket,mode+buffer,"+");
-                break;
-              } catch (err) {
-                this.trace(err,GdbServer.TRACE_COMMANDS);
-                this.sendPacket(socket, "-");
-              }
-            }
-            this.trace("Unknown Xfer request ",GdbServer.TRACE_COMMANDS);
-            this.traceDir(packet,GdbServer.TRACE_COMMANDS);
-            break;
-          case 'Attached':
-            this.sendPacket(socket,'+');
-            break;
-          default:
-            this.trace("Unknown query: "+packet.command,GdbServer.TRACE_COMMANDS);
-            this.sendPacket(socket,'-');
-            break;
+    if (packet.command === "Xfer") {
+      if (packet.args[0] === "features" && packet.args[1] === "read") {
+        this.trace(`Xfer Features Read: architecture\\arm\\schema\\${packet.args[2]}`, GdbServer.TRACE_COMMANDS);
+        try {
+          const schema = fs.readFileSync(`architecture\\arm\\schema\\${packet.args[2]}`, 'utf8');
+          const schemaPart = packet.args[3].split(",");
+          const start = parseInt(schemaPart[0], 16);
+          var length = parseInt(schemaPart[1], 16);
+          let mode = "l";
+  
+          if (start > schema.length) {
+            this.trace("seeking after file length", GdbServer.TRACE_COMMANDS);
+            GdbProtocolBase.Send(socket, "-");
+            return;
+          }
+  
+          if ((start + length) > schema.length) {
+            length = schema.length - start;
+          } else if ((start + length) < schema.length) {
+            mode = "m";
+          }
+  
+          const buffer = schema.substring(start, length + start);
+      //    this.trace(`got ${start} and ${length} fetched ${buffer.length} from ${schema.length}`, GdbServer.TRACE_COMMANDS);
+          GdbProtocolBase.Send(socket, mode + buffer, "+");
+          return;
+
+        } catch (err) {
+          this.trace(err, GdbServer.TRACE_COMMANDS);
+          GdbProtocolBase.Send(socket, "-");
+          return;
         }
       }
+  
+      this.trace("Unknown Xfer request", GdbServer.TRACE_COMMANDS);
+      this.traceDir(packet, GdbServer.TRACE_COMMANDS);
+      GdbProtocolBase.Send(socket, "-");
+      return;
+    }
+  
+    GdbProtocolBase.Send(socket, "", "+");
+  }
+  
 
-      sendPacket(socket,  payload ,prefix="") {
-        const packet = Buffer.from(`${payload}`,'ascii');     
-        const checksum = packet.reduce((acc, cur) => acc + cur, 0) % 256;
-        const checksumStr = checksum.toString(16).toUpperCase().padStart(2, '0');
-        const packetStr = packet.toString('ascii');
-        
-        const packetWithChecksum = Buffer.from(`${prefix}$${payload}#${checksumStr}`);
-        
-        this.trace(`sending '${packetWithChecksum}'`, GdbServer.TRACE_OUTGOING);
-        socket.write(packetWithChecksum);
-      }
-    
+  trace(msg, requireFlag) {
+    if (this.traceFlags & requireFlag) console.log("GDB: "+ msg);
+  }
+
+  traceDir(msg, requireFlag) {
+    if (this.traceFlags & requireFlag) console.log("GDB: "+ JSON.stringify(msg));
+  }
+
+  
 }
 
 
