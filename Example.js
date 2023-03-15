@@ -1,7 +1,7 @@
-const GdbServer = require ("./gdb/GdbServer.js");
-const Memory = require('./system/Memory.js');
-const VirtualMachine = require("./system/VirtualMachine.js");
-const [ARM32, ARMV7L] = require("./architecture/arm/armv7l.js");
+const GdbServer = require ("./Jemu/gdb/GdbServer.js.js");
+const Memory = require('./Jemu/Memory.js');
+const VirtualMachine = require("./Jemu/VirtualMachine.js");
+const [ARM32, ARMV7L] = require("./Jemu/architecture/arm/armv7l.js");
 
 
 const machineLayoutTree = {
