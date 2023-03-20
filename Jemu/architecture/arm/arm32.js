@@ -22,7 +22,7 @@
 
 const CoreBase = require("../../CoreBase.js");
 const [BitFields, BitSet,BitClear] = require("../../helpers/BitFields.js");
-const [SystemControlCoprocessor] = require ('./SystemControlCoprocessor.js');
+const [SystemControlCoprocessor] = require ('./SystemControlCoProStub.js');
 
 var APSR_FIELDS = {
   N: 31,
@@ -51,13 +51,11 @@ class ARM32 extends CoreBase  {
     "R8":8, "R9":9, "R10":10, "R11":11, "R12":12, "SP":13, "LR":14, "PC":15,
     "APSR":16
   };
+  static ArmPipelineWidth = 8;
+  static ThumbPipelineWidth = 4;
   
   constructor(name, platform, memory) {
-    super (name, platform, memory);
-
-    // initialize registers
-    this.regs = new Uint32Array(ARM32.RegisterMap.APSR+1);
-    this.mapRegisters(ARM32.RegisterMap);    
+    super (name, platform, memory, ARM32.RegisterMap);
 
     // initialize basic coprocessors
     this.coprocessors = new Array(16);
@@ -75,6 +73,7 @@ class ARM32 extends CoreBase  {
 
   }
 
+
   // Perform single Step: Evaluate Instruction
   step() {
     // if core is disabled return
@@ -89,6 +88,9 @@ class ARM32 extends CoreBase  {
       // Would rather have a bitmask based decision tree based on opcode classes for performance, but this is very intuitive. 
       for (var opcodeId in this.opcodes) {
         var opcodeDef=this.opcodes[opcodeId];
+
+        // if instruction is not mode correct ignore.
+        if (opcodeDef.encodingClass!='arm') continue;
         
         // Find matching opcode handler 
         if ( unsigned(opcode & opcodeDef.mask) == opcodeDef.match) {
@@ -97,8 +99,15 @@ class ARM32 extends CoreBase  {
           var decoded=BitFields.Parse(opcode, opcodeDef.decoder);
 
           // Simulate / Evaluate Opcode
-          console.log(`0x${this.PC.toString(16).padStart(8,'0')} : 0x${opcode.toString(16)} as '${opcodeDef.desc}' with ${JSON.stringify(decoded)}`);
-          opcodeDef.handler(this, this.memory, opcode, decoded);
+          if (!opcodeDef.handler) {
+            const  msg=`Unhandled instruction @ 0x${this.PC.toString(16).padStart(8,'0')} : 0x${opcode.toString(16)} (${this.mode}) as '${opcodeDef.instructions}' with ${JSON.stringify(decoded)}`;
+            console.log (msg);
+            throw(msg);
+          } else {
+
+            console.log(`@ 0x${this.PC.toString(16).padStart(8,'0')} : 0x${opcode.toString(16)} (${this.mode}) as '${opcodeDef.instructions}' with ${JSON.stringify(decoded)}`);
+            opcodeDef.handler(this, this.memory, opcode, decoded);
+          }
           found=true;
           break;
         }
@@ -111,6 +120,7 @@ class ARM32 extends CoreBase  {
       }
     }
   }
+
 
 
   // Barrel shift operation

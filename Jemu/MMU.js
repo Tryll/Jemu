@@ -75,7 +75,7 @@ class MMU {
                 return segment;
             }
         }
-        throw new Error(`No segment found for address: 0x${address.toString(16)}`);
+        throw new Error(`No segment found for address: 0x${ (address) ?address.toString(16) : 'NaN' } `);
     }
 
     doBreakPointCheck(address) {

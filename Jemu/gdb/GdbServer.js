@@ -50,6 +50,7 @@ class GdbServer {
     this.GdbCommandHandlers = {
       'g': this.handleGeneralRegisters.bind(this),
       'p': this.handleReadRegister.bind(this),
+      'P': this.handleWriteRegister.bind(this),
       'q': this.handleQueryPacket.bind(this),
       'm': this.handleReadMemory.bind(this),
       'M': this.handleWriteMemory.bind(this),
@@ -98,9 +99,9 @@ class GdbServer {
     const cpu = this.machine.cores[this.gdbThreadSelect-1];
     let regdump = "";
   
-    for (let i = 0; i < cpu.regs.length; i++) {
+    for (let i = 0; i < cpu.registers.length; i++) {
       const buf = Buffer.alloc(4);
-      buf.writeUInt32LE(cpu.regs[i], 0);
+      buf.writeUInt32LE(cpu.registers[i], 0);
       regdump += buf.toString('hex').padStart(8, 0);
     }
   
@@ -118,14 +119,29 @@ class GdbServer {
     }
   
     const cpu = this.machine.cores[this.gdbThreadSelect - 1];
-    if (registerIndex >= 0 && registerIndex < cpu.regs.length) {
-      const registerValue = cpu.regs[registerIndex];
+    if (registerIndex >= 0 && registerIndex < cpu.registers.length) {
+      const registerValue = cpu.registers[registerIndex];
       const buf = Buffer.alloc(4);
       buf.writeUInt32LE(registerValue, 0);
       const hexValue = buf.toString('hex').padStart(8, 0);
       GdbProtocolBase.Send(socket, hexValue, "+");
     } else {
       GdbProtocolBase.Send(socket, "00000000", "+");
+    }
+  }
+
+  handleWriteRegister(socket, packet) {
+    const [registerIndexStr, registerValueStr] = packet.command.split(',');
+    const registerIndex = parseInt(registerIndexStr, 16);
+    const registerValue = parseInt(registerValueStr, 16);
+    this.trace(`WriteRegister ${registerIndex} value ${registerValue}`, GdbServer.TRACE_COMMANDS);
+
+    const cpu = this.machine.cores[this.gdbThreadSelect - 1];
+    if (registerIndex >= 0 && registerIndex < cpu.registers.length) {
+      cpu.registers[registerIndex] = registerValue;
+      GdbProtocolBase.Send(socket, "OK", "+");
+    } else {
+      GdbProtocolBase.Send(socket, "E01", "+"); // Send an error response
     }
   }
 
@@ -227,15 +243,27 @@ class GdbServer {
         const thread = packet.args.s;
         this.trace(`VM Step #${thread}`, GdbServer.TRACE_COMMANDS);
         this.gdbThreadSelect = thread;
-        const OKorNOT = this.machine.step(thread);
+        try{
+          const OKorNOT = this.machine.step(thread);
+        } catch(error) {
+          if (!error.breakpoint) {
+            console.log(error);
+            this.trace("VM Step exception :" +error, GdbServer.TRACE_ALL);
+          }
+          
+        }
         GdbProtocolBase.Send(socket, `T${(TARGET_SIGTRAP).toString(16).padStart(2, "0")}thread:${this.gdbThreadSelect.toString(16).padStart(2, '0')}`, "+");
+        
         return;
       } else {
         this.trace("VM Run", GdbServer.TRACE_COMMANDS);
         try {
           this.machine.continue();
         } catch (error) {
-          this.traceDir(error, GdbServer.TRACE_COMMANDS);
+          if (!error.breakpoint) {
+            console.log(error);
+          }
+          
           this.gdbThreadSelect = parseInt(error.core) + 1;
           GdbProtocolBase.Send(socket, `T${(TARGET_SIGTRAP).toString(16).padStart(2, "0")}thread:${(this.gdbThreadSelect).toString(16).padStart(2, '0')}`, "+");
           return;

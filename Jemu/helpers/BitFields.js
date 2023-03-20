@@ -85,18 +85,24 @@ class BitFields {
       return byRefObj;
     }
 
-    // Parses a value based on the provided bitFieldMap and return an object with the values.
-    // example decoder: {rd: [15, 12], imm12: [11,0], isSub:[23, 20, 4]}
-    // isSub =  the value of the bitrange 23-20 compared to 4
-    //
-    static Parse(value, bitFieldMap) {
-      var decoded={};
+
+    // Parses opcode based on bitFieldMap
+    // The Field map is length based, each entry has a length and are in order high to low
+    // Example list of fields and sizes: {"static0":{"len":10,"eq":261},"Rm":4,"Rdn":4}
+    static Parse(opcode, bitFieldMap, opcodeWidth=31) {
+      var decoded={};      
+      var currentBit=opcodeWidth;
       for (var name in bitFieldMap){
-        var decoderDef=bitFieldMap[name];
-        decoded[name]=BitFields.DecodeBitValue(value, decoderDef);
-        if (decoderDef.length==3) {
-          decoded[name]=decoded[name]==decoderDef[2];
+
+        var decoderBits=bitFieldMap[name];
+        if (decoderBits.len) {
+          decoderBits=decoderBits.len; // if object grab length
         }
+        decoderBits--; // bits align
+        var bits=[currentBit, currentBit-decoderBits];
+        currentBit-=(decoderBits+1); // move right
+        decoded[name]=BitFields.DecodeBitValue(opcode, bits);
+        
       }
       return decoded;
     }
