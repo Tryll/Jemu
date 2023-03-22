@@ -23,33 +23,31 @@ const arm_instructions = require("./arm32_instruction_set.js");
 const arm32_intrinsics  = require ("./arm32_intrinsics.js");
 Object.assign(global, arm32_intrinsics);
 
-const ArmPipelineWidth= 8;
-const ThumbPipelineWidth= 4;
 
 
-function setOpcodeHandler(encodingClass, instruction, handler) {
-    for(var inst in this.opcodes) {
-        var instDef = this.opcodes[inst];
-        if (instDef.encodingClass == encodingClass && instDef.instructions.includes(instruction)) {
-            this.opcodes[inst].handler=handler;
-        }
-    }
-}
 
-var ARMvAll = {
-    name : "ARMvAll",
-    endianness : "little-endian",
-    opcodes:arm_instructions,
-    setOpcodeHandler : setOpcodeHandler
-};
+arm_handlers = [
+    { encoding:"arm", instruction:"BL<c> <label>", handler:ARM_EmulateBImm},
+    { encoding:"arm", instruction:"B<c> <label>", handler:ARM_EmulateBImm},
+    { encoding:"arm", instruction:"BX<c> <Rm>", handler: ARM_EmulateBXReg},
+    { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateSUBorADRorSUBS},
+    { encoding:"arm", instruction:"LDR<c> <Rt>, <label>", handler : ARM_EmulateLDRImm},
+    { encoding:"arm", instruction:"CMP<c> <Rn>, <Rm>{, <shift>}", handler : ARM_EmulateCMPReg},
+    { encoding:"arm", instruction:"MOV{S}<c> <Rd>, <Rm>", handler: ARM_MovRegReg},
+    { encoding:"arm", instruction:"MOV{S}<c> <Rd>, #<const>", handler:ARM_EmulateMovRegConst},
+    { encoding:"arm", instruction:"ORR{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateORRRegConst},
+    { encoding:"arm", instruction:"MCR<c> <coproc>, <opc1>, <Rt>, <CRn>, <CRm>{, <opc2>}", handler: ARM_EmulateMRC},
+    { encoding:"arm", instruction:"ISB <option>", handler: (core)=> { core.PC+=4 }},
+    { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}", handler: ARM_SubRegReg},
+    { encoding:"arm", instruction:"ADD{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}", handler: ARM_AddRegReg},
+    { encoding:"arm", instruction:"LDR<c> <Rt>, [<Rn>{, #+/-<imm12>}]", handler: ARM_LDR_RegImm},
+    { encoding:"arm", instruction:"STR<c> <Rt>, [<Rn>{, #+/-<imm12>}]",handler: ARM_STR_RegImm},
+    { encoding:"arm", instruction:"MRS<c> <Rd>, <spec_reg>", handler: ARM_MRS_Reg },
+    { encoding:"arm", instruction:"MSR<c> <spec_reg>, <Rn>", handler: ARM_EmulateMSR},
+    { encoding:"arm", instruction:"BIC{S}<c> <Rd>, <Rn>, #<const>", handler: ARM_EmulateBICRegConst },
+]
 
 
-function GetRegister(core, regId) {
-    if (regId===15) {
-        return core.registers[regId] + ((core.mode=='arm') ? ArmPipelineWidth : ThumbPipelineWidth);
-    }
-    return core.registers[regId];
-}
 
 
 
@@ -348,31 +346,44 @@ function ARM_EmulateBICRegConst(core, memory, opcode, decoded) {
 
 
 
-arm_handlers = [
-    { encoding:"arm", instruction:"BL<c> <label>", handler:ARM_EmulateBImm},
-    { encoding:"arm", instruction:"B<c> <label>", handler:ARM_EmulateBImm},
-    { encoding:"arm", instruction:"BX<c> <Rm>", handler: ARM_EmulateBXReg},
-    { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateSUBorADRorSUBS},
-    { encoding:"arm", instruction:"LDR<c> <Rt>, <label>", handler : ARM_EmulateLDRImm},
-    { encoding:"arm", instruction:"CMP<c> <Rn>, <Rm>{, <shift>}", handler : ARM_EmulateCMPReg},
-    { encoding:"arm", instruction:"MOV{S}<c> <Rd>, <Rm>", handler: ARM_MovRegReg},
-    { encoding:"arm", instruction:"MOV{S}<c> <Rd>, #<const>", handler:ARM_EmulateMovRegConst},
-    { encoding:"arm", instruction:"ORR{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateORRRegConst},
-    { encoding:"arm", instruction:"MCR<c> <coproc>, <opc1>, <Rt>, <CRn>, <CRm>{, <opc2>}", handler: ARM_EmulateMRC},
-    { encoding:"arm", instruction:"ISB <option>", handler: (core)=> { core.PC+=4 }},
-    { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}", handler: ARM_SubRegReg},
-    { encoding:"arm", instruction:"ADD{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}", handler: ARM_AddRegReg},
-    { encoding:"arm", instruction:"LDR<c> <Rt>, [<Rn>{, #+/-<imm12>}]", handler: ARM_LDR_RegImm},
-    { encoding:"arm", instruction:"STR<c> <Rt>, [<Rn>{, #+/-<imm12>}]",handler: ARM_STR_RegImm},
-    { encoding:"arm", instruction:"MRS<c> <Rd>, <spec_reg>", handler: ARM_MRS_Reg },
-    { encoding:"arm", instruction:"MSR<c> <spec_reg>, <Rn>", handler: ARM_EmulateMSR},
-    { encoding:"arm", instruction:"BIC{S}<c> <Rd>, <Rn>, #<const>", handler: ARM_EmulateBICRegConst },
-]
+
+
+
+const ArmPipelineWidth= 8;
+const ThumbPipelineWidth= 4;
+
+
+function setOpcodeHandler(encodingClass, instruction, handler) {
+    for(var inst in this.opcodes) {
+        var instDef = this.opcodes[inst];
+        if (instDef.encodingClass == encodingClass && instDef.instructions.includes(instruction)) {
+            this.opcodes[inst].handler=handler;
+        }
+    }
+}
+
+var ARMvAll = {
+    name : "ARMvAll",
+    endianness : "little-endian",
+    opcodes:arm_instructions,
+    setOpcodeHandler : setOpcodeHandler
+};
+
+
+function GetRegister(core, regId) {
+    if (regId===15) {
+        return core.registers[regId] + ((core.mode=='arm') ? ArmPipelineWidth : ThumbPipelineWidth);
+    }
+    return core.registers[regId];
+}
 
 
 // map all handlers
 for(var i in arm_handlers) {
     ARMvAll.setOpcodeHandler(arm_handlers[i].encoding, arm_handlers[i].instruction, arm_handlers[i].handler );
 }
-  
+
+
+
+
 module.exports = ARMvAll;

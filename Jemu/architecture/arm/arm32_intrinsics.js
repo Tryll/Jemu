@@ -89,14 +89,7 @@ function SignExtend(value, currentWidth, desiredWidth=32) {
     return (value << (desiredWidth - currentWidth)) >> (desiredWidth - currentWidth);
 }
     
-function BranchRelativePC(core, address) {
-    BranchWritePC(core, core.PC + address);
-    /*if (core.mode === 'arm') {
-        core.PC += address & 0xFFFFFFFC; 
-    } else {
-        core.PC += (address & 0xFFFFFFFE) | 1;  // Gpt setting least sign 1 to indicate thumb mode
-    }*/
-}
+
 
 function BranchWritePC(core, address) {
     if (address & 1) {
@@ -275,4 +268,4 @@ function ConditionPassed(cond, flags) {
   } 
 
 
-module.exports={BranchWritePC, BranchRelativePC, SignExtend, ARMExpandImm, DecodeRegShift, DecodeImmShift, ConditionPassed, RRX, RRX_C, ROR, ROR_C, ASR, ASR_C, LSR, LSR_C, LSL, LSL_C, ZeroExtend, UInt, ARMExpandImm_C, Shift_C};
+module.exports={BranchWritePC, SignExtend, ARMExpandImm, DecodeRegShift, DecodeImmShift, ConditionPassed, RRX, RRX_C, ROR, ROR_C, ASR, ASR_C, LSR, LSR_C, LSL, LSL_C, ZeroExtend, UInt, ARMExpandImm_C, Shift_C};
