@@ -90,19 +90,27 @@ function SignExtend(value, currentWidth, desiredWidth=32) {
 }
     
 function BranchRelativePC(core, address) {
-    if (core.mode === 'arm') {
+    BranchWritePC(core, core.PC + address);
+    /*if (core.mode === 'arm') {
         core.PC += address & 0xFFFFFFFC; 
     } else {
         core.PC += (address & 0xFFFFFFFE) | 1;  // Gpt setting least sign 1 to indicate thumb mode
-    }
+    }*/
 }
 
 function BranchWritePC(core, address) {
-    if (core.mode === 'arm') {
+    if (address & 1) {
+        core.mode = 'thumb';
+        core.PC = address & ~1; // Clear the least significant bit
+    } else {
+        core.mode = 'arm';
+        core.PC = address & ~3; // Clear the two least significant bits
+    }
+ /*   if (core.mode === 'arm') {
         core.PC = address & 0xFFFFFFFC; 
     } else  {
         core.PC = (address & 0xFFFFFFFE) | 1;  // Gpt setting least sign 1 to indicate thumb mode
-    }
+    }*/
 }
 
 function ZeroExtend(value, width) {

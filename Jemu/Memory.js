@@ -37,29 +37,29 @@ class Memory {
       this.dataView.setUint8(address, value);
     }
   
-    readWord(address) {
+    readUint16(address) {
       return this.dataView.getUint16(address, this.littleEndian);
     }
   
-    writeWord(address, value) {
+    writeUint16(address, value) {
       this.dataView.setUint16(address, value, this.littleEndian);
     }
   
-    readDword(address) {
+    readUint32(address) {
       return this.dataView.getUint32(address, this.littleEndian);
     }
 
-    writeDword(address, value) {
+    writeUint32(address, value) {
       this.dataView.setUint32(address, value, this.littleEndian);
     }
   
-    readQword(address) {
+    readUint64(address) {
       const highBits = this.dataView.getBigUint64(address, this.littleEndian);
       const lowBits = this.dataView.getBigUint64(address + 8, this.littleEndian);
       return (highBits << BigInt(64)) + lowBits;
     }
   
-    writeQword(address, value) {
+    writeUint64(address, value) {
       this.dataView.setBigUint64(address, value >> BigInt(64), this.littleEndian);
       this.dataView.setBigUint64(address + 8, value & BigInt(0xffffffffffffffff), this.littleEndian);
     }

@@ -51,10 +51,7 @@ function GetRegister(core, regId) {
     return core.registers[regId];
 }
 
-function ARM_EmulateB(core, memory, opcode, decoded) {
-    var imm32 = SignExtend(decoded.imm24 << 2, 26);
-    BranchWritePC(core, GetRegister(core, 15) + imm32);
-}
+
 
 // SUB{S}<c> <Rd>, <Rn>, #<const>
 // This is locked to ADRSubstraction by mask/match
@@ -110,7 +107,7 @@ function ARM_EmulateLDRImm(core, memory, opcode, decoded) {
 
     address = add ? (Rn_value + imm32) : (Rn_value - imm32);
 
-    core.registers[t] = memory.readDword(address);
+    core.registers[t] = memory.readUint32(address);
 
     // Increment the program counter (core.PC) by 4
     core.PC += 4;
@@ -133,18 +130,6 @@ function ARM_EmulateCMPReg(core, memory, opcode, decoded) {
     core.PC += 4;
 }
 
-//@ 0x0000004c : 0xeb0013db (arm) as 'BL<c> <label>' with {"cond":14,"static0":11,"imm24":5083}
-function ARM_EmulateBLLabel(core,memory,opcode,decoded) {
-    if (ConditionPassed(decoded.cond,core.flags)) {
-        var imm32 = GetRegister(core, 15) + SignExtend(decoded.imm24 << 2, 26);
-
-        core.LR = core.PC+4;
-        BranchWritePC(core, imm32);
-    } else {
-        core.PC+4
-    }
-}
-
 //@ 0x00004fc0 : 0xe3a024ff (arm) as 'MOV{S}<c> <Rd>, #<const>' with {"cond":14,"static0":29,"S":0,"static1":0,"Rd":2,"imm12":1279}
 function ARM_EmulateMovRegConst(core,memory,opcode,decoded) {
     var imm32 = ARMExpandImm(decoded.imm12);
@@ -152,6 +137,25 @@ function ARM_EmulateMovRegConst(core,memory,opcode,decoded) {
 
     core.PC += 4;
 }
+
+
+//@ 0x00000078 : 0xe1a0000f (arm) as 'MOV{S}<c> <Rd>, <Rm>' with {"cond":14,"static0":13,"S":0,"static1":0,"Rd":0,"static2":0,"Rm":15}
+function ARM_MovRegReg(core,memory,opcode,decoded) {
+    var Rm_value = GetRegister(core, decoded.Rm);
+    core.registers[decoded.Rd] = Rm_value;
+
+    // Update condition flags if S bit is set
+    if (decoded.S === 1) {
+        core.flags.N = (Rm_value & 0x80000000) !== 0; // Negative flag
+        core.flags.Z = Rm_value === 0; // Zero flag
+        core.flags.C = core.flags.C; // Carry flag remains unchanged
+        core.flags.V = core.flags.V; // Overflow flag remains unchanged
+    }
+
+    core.PC += 4; // Increment the program counter
+}
+
+
 
 //@ 0x00004fc4 : 0xe382280f (arm) as 'ORR{S}<c> <Rd>, <Rn>, #<const>' with {"cond":14,"static0":28,"S":0,"Rn":2,"Rd":2,"imm12":2063}
 function ARM_EmulateORRRegConst(core, memory, opcode, decoded) {
@@ -182,15 +186,187 @@ function ARM_EmulateMRC(core, memory, opcode, decoded) {
 }
 
 
+
+//0xa000007 (arm) as 'B<c> <label>' with {"cond":0,"static0":10,"imm24":7}
+//@ 0x0000004c : 0xeb0013db (arm) as 'BL<c> <label>' with {"cond":14,"static0":11,"imm24":5083}
+function ARM_EmulateBImm(core, memory, opcode, decoded) {
+    if (ConditionPassed(decoded.cond, core.flags)) {
+        var imm32 = SignExtend(decoded.imm24 << 2, 26);
+
+        // If BL save LR
+        if (decoded.static0==11) {
+            core.LR=core.PC+4;
+        }
+
+        BranchWritePC(core, GetRegister(core, 15) + imm32);
+    } else {
+        core.PC += 4; // Increment the program counter if the condition is not met
+    }
+}
+
+
+
+
+//@ 0x00004fd4 : 0xe12fff1e (arm) as 'BX<c> <Rm>' with {"cond":14,"static0":1245169,"Rm":14}
+function ARM_EmulateBXReg(core, memory, opcode, decoded) {
+    // No Conditional Check, ref paper
+    var Rm_value = GetRegister(core, decoded.Rm);
+    BranchWritePC(core, Rm_value);
+}
+
+//@ 0x00000080 : 0xe0400001 (arm) as 'SUB{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}' with {"cond":14,"static0":2,"S":0,"Rn":0,"Rd":0,"imm5":0,"type":0,"static1":0,"Rm":1}
+function ARM_SubRegReg(core, memory, opcode, decoded) {
+    var Rn_value = GetRegister(core, decoded.Rn);
+    var Rm_value = GetRegister(core, decoded.Rm);
+    var shift = DecodeImmShift(decoded.type, decoded.imm5);
+    var shifted = Shift_C(Rm_value, shift.type, shift.value, core.flags.C);
+
+    var result = Rn_value - shifted.result;
+    core.registers[decoded.Rd] = result;
+
+    // Update condition flags if the S bit is set
+    if (decoded.S === 1) {
+        core.flags.N = (result & 0x80000000) !== 0; // Negative flag
+        core.flags.Z = result === 0; // Zero flag
+        core.flags.C = Rn_value >= shifted.result; // Carry flag
+        core.flags.V = (((Rn_value ^ shifted.result) & (Rn_value ^ result)) & 0x80000000) !== 0; // Overflow flag
+    }
+
+    core.PC += 4; // Increment the program counter
+}
+
+// @ 0x00000088 : 0xe0800001 (arm) as 'ADD{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}' with {"cond":14,"static0":4,"S":0,"Rn":0,"Rd":0,"imm5":0,"type":0,"static1":0,"Rm":1}
+function ARM_AddRegReg(core, memory, opcode, decoded) {
+    var Rn_value = GetRegister(core, decoded.Rn);
+    var Rm_value = GetRegister(core, decoded.Rm);
+    var shift = DecodeImmShift(decoded.type, decoded.imm5);
+    var shifted = Shift_C(Rm_value, shift.type, shift.value, core.flags.C);
+
+    var result = Rn_value + shifted.result;
+    core.registers[decoded.Rd] = result;
+
+    // Update condition flags if the S bit is set
+    if (decoded.S === 1) {
+        core.flags.N = (result & 0x80000000) !== 0; // Negative flag
+        core.flags.Z = result === 0; // Zero flag
+        core.flags.C = (result >>> 0) < (Rn_value >>> 0); // Carry flag
+        core.flags.V = (((Rn_value ^ ~shifted.result) & (Rn_value ^ result)) & 0x80000000) !== 0; // Overflow flag
+    }
+
+    core.PC += 4; // Increment the program counter
+}
+
+// @ 0x00000094 : 0xe4903004 (arm) as 'LDR<c> <Rt>, [<Rn>{, #+/-<imm12>}],LDR<c> <Rt>, [<Rn>], #+/-<imm12>,LDR<c> <Rt>, [<Rn>, #+/-<imm12>]!' with {"cond":14,"static0":2,"P":0,"U":1,"static1":0,"W":0,"static2":1,"Rn":0,"Rt":3,"imm12":4}
+function ARM_LDR_RegImm(core, memory, opcode, decoded) {
+    var Rn_value = GetRegister(core, decoded.Rn);
+    var imm12 = decoded.imm12;
+    var address;
+
+    if (decoded.U === 1) { // Add the immediate value if the U bit is set
+        address = Rn_value + imm12;
+    } else { // Subtract the immediate value if the U bit is not set
+        address = Rn_value - imm12;
+    }
+
+    var data = memory.readUint32(address);
+    core.registers[decoded.Rt] = data;
+
+    core.PC += 4; // Increment the program counter
+}
+
+// @ 0x0000009c : 0xe4813004 (arm) as 'STR<c> <Rt>, [<Rn>{, #+/-<imm12>}],STR<c> <Rt>, [<Rn>], #+/-<imm12>,STR<c> <Rt>, [<Rn>, #+/-<imm12>]!' with {"cond":14,"static0":2,"P":0,"U":1,"static1":0,"W":0,"static2":0,"Rn":1,"Rt":3,"imm12":4}
+function ARM_STR_RegImm(core, memory, opcode, decoded) {
+    var Rn_value = GetRegister(core, decoded.Rn);
+    var Rt_value = GetRegister(core, decoded.Rt);
+    var imm12 = decoded.imm12;
+    var address;
+
+    if (decoded.U === 1) { // Add the immediate value if the U bit is set
+        address = Rn_value + imm12;
+    } else { // Subtract the immediate value if the U bit is not set
+        address = Rn_value - imm12;
+    }
+
+    memory.writeUint32(address, Rt_value);
+
+    if (decoded.W) { // If the W bit is set, update the base register Rn
+        core.register[decoded.Rn]=address;
+    }
+
+    core.PC += 4; // Increment the program counter
+}
+
+
+// @ 0x000000a4 : 0xe10f0000 (arm) as 'MRS<c> <Rd>, <spec_reg>' with {"cond":14,"static0":271,"Rd":0,"static1":0}
+function ARM_MRS_Reg(core, memory, opcode, decoded) {
+    core.registers[decoded.Rd] = core.CPSR;
+    core.PC += 4; // Increment the program counter
+}
+
+//@ 0x000000b0 : 0xe121f001 (arm) as 'MSR<c> <spec_reg>, <Rn>' with {"cond":14,"static0":2,"R":0,"static1":2,"mask":1,"static2":3840,"Rn":1}
+function ARM_EmulateMSR(core, memory, opcode, decoded) {
+    var Rn_value = GetRegister(core, decoded.Rn);
+    var mask = decoded.mask;
+
+    // If the mask bit is set, update the appropriate fields
+    if (mask & 0x1) { // Control field
+        core.CPSR = (core.CPSR & ~0xff) | (Rn_value & 0xff);
+    }
+    if (mask & 0x2) { // Extension field
+        core.CPSR = (core.CPSR & ~0xff00) | (Rn_value & 0xff00);
+    }
+    if (mask & 0x4) { // Status field
+        core.CPSR = (core.CPSR & ~0xff0000) | (Rn_value & 0xff0000);
+    }
+    if (mask & 0x8) { // Flags field
+        core.CPSR = (core.CPSR & ~0xff000000) | (Rn_value & 0xff000000);
+    }
+
+    core.PC += 4;
+}
+
+
+//@ 0x000000a8 : 0xe3c0001f (arm) as 'BIC{S}<c> <Rd>, <Rn>, #<const>' with {"cond":14,"static0":30,"S":0,"Rn":0,"Rd":0,"imm12":31}
+function ARM_EmulateBICRegConst(core, memory, opcode, decoded) {
+    var Rn_value = GetRegister(core, decoded.Rn);
+    var imm32 = ARMExpandImm(decoded.imm12);
+    var result = Rn_value & (~imm32);
+    core.registers[decoded.Rd] = result;
+
+    if (decoded.S === 1) { // Update status flags for BICS
+        var isNegative = (result & 0x80000000) !== 0;
+        var isZero = result === 0;
+
+        core.flags.N = isNegative;
+        core.flags.Z = isZero;
+        core.flags.C = false; // Clear carry flag
+        core.flags.V = false; // Clear overflow flag
+    }
+
+    core.PC += 4;
+}
+
+
+
 arm_handlers = [
-    { encoding:"arm", instruction:"B<c> <label>", handler:ARM_EmulateB},
+    { encoding:"arm", instruction:"BL<c> <label>", handler:ARM_EmulateBImm},
+    { encoding:"arm", instruction:"B<c> <label>", handler:ARM_EmulateBImm},
+    { encoding:"arm", instruction:"BX<c> <Rm>", handler: ARM_EmulateBXReg},
     { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateSUBorADRorSUBS},
     { encoding:"arm", instruction:"LDR<c> <Rt>, <label>", handler : ARM_EmulateLDRImm},
     { encoding:"arm", instruction:"CMP<c> <Rn>, <Rm>{, <shift>}", handler : ARM_EmulateCMPReg},
-    { encoding:"arm", instruction:"BL<c> <label>", handler:ARM_EmulateBLLabel},
+    { encoding:"arm", instruction:"MOV{S}<c> <Rd>, <Rm>", handler: ARM_MovRegReg},
     { encoding:"arm", instruction:"MOV{S}<c> <Rd>, #<const>", handler:ARM_EmulateMovRegConst},
     { encoding:"arm", instruction:"ORR{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateORRRegConst},
-    { encoding:"arm", instruction:"MCR<c> <coproc>, <opc1>, <Rt>, <CRn>, <CRm>{, <opc2>}", handler: ARM_EmulateMRC}
+    { encoding:"arm", instruction:"MCR<c> <coproc>, <opc1>, <Rt>, <CRn>, <CRm>{, <opc2>}", handler: ARM_EmulateMRC},
+    { encoding:"arm", instruction:"ISB <option>", handler: (core)=> { core.PC+=4 }},
+    { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}", handler: ARM_SubRegReg},
+    { encoding:"arm", instruction:"ADD{S}<c> <Rd>, <Rn>, <Rm>{, <shift>}", handler: ARM_AddRegReg},
+    { encoding:"arm", instruction:"LDR<c> <Rt>, [<Rn>{, #+/-<imm12>}]", handler: ARM_LDR_RegImm},
+    { encoding:"arm", instruction:"STR<c> <Rt>, [<Rn>{, #+/-<imm12>}]",handler: ARM_STR_RegImm},
+    { encoding:"arm", instruction:"MRS<c> <Rd>, <spec_reg>", handler: ARM_MRS_Reg },
+    { encoding:"arm", instruction:"MSR<c> <spec_reg>, <Rn>", handler: ARM_EmulateMSR},
+    { encoding:"arm", instruction:"BIC{S}<c> <Rd>, <Rn>, #<const>", handler: ARM_EmulateBICRegConst },
 ]
 
 

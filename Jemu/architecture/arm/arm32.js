@@ -24,7 +24,7 @@ const CoreBase = require("../../CoreBase.js");
 const [BitFields, BitSet,BitClear] = require("../../helpers/BitFields.js");
 const [SystemControlCoprocessor] = require ('./SystemControlCoProStub.js');
 
-var APSR_FIELDS = {
+var CPSR_FIELDS = {
   N: 31,
   Z: 30,
   C: 29,
@@ -33,9 +33,10 @@ var APSR_FIELDS = {
   GE: [19, 16],
   E: 9,
   A: 8,
-  I: 7,
-  F: 6,
-  T: 5
+  I: 7,     // 1 = IRQ interrupts disabled
+  F: 6,     // 1 = FIQ interrupts disabled
+  T: 5,     // Thumb state
+  M: [4,0], // Current processor mode (User, FIQ, IRQ, Supervisor, Abort, Undefined, or System)
 };
 
 
@@ -49,7 +50,7 @@ class ARM32 extends CoreBase  {
   static RegisterMap = {
     "R0":0, "R1":1, "R2":2, "R3":3, "R4":4, "R5":5, "R6":6, "R7":7,
     "R8":8, "R9":9, "R10":10, "R11":11, "R12":12, "SP":13, "LR":14, "PC":15,
-    "APSR":16
+    "CPSR":16
   };
   static ArmPipelineWidth = 8;
   static ThumbPipelineWidth = 4;
@@ -62,15 +63,23 @@ class ARM32 extends CoreBase  {
     this.coprocessors[15] = new SystemControlCoprocessor(this, memory);
     
     // bind flags to register APSR (16)
-    this.flags = BitFields.ByRef(this, "APSR", APSR_FIELDS);
+    this.flags = BitFields.ByRef(this, "CPSR", CPSR_FIELDS);
 
     // set initial values for PC and SP
     this.SP=0;
     this.PC=0;
-    this.APSR = 0x400001D3;
+    this.CPSR = 0x400001D3;
 
     this.mode="arm";
 
+  }
+
+  set mode(newMode) {
+    this.flags.T = (newMode=='arm') ? 0 : 1;
+  }
+
+  get mode() {
+    return (this.flags.T) ? "thumb" : "arm";
   }
 
 
@@ -81,7 +90,7 @@ class ARM32 extends CoreBase  {
 
     if (this.mode=="arm") {
     
-      var opcode=this.memory.readDword(this.PC);
+      var opcode=this.memory.readUint32(this.PC);
       var found=false;
 
       // Walk through the complete opcode set to find an appropraite match by bit mask

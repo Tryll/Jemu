@@ -112,17 +112,17 @@ class MMU {
         segment.memory.writeByte(address - segment.start, value);
     }
 
-    readWord(address) {
+    readUint16(address) {
         this.doBreakPointCheck(address);
 
         const segment = this.getSegment(address);
         if (!segment.permissions.includes('r')) {
             throw new Error(`No read permission for address: 0x${address.toString(16)}`);
         }
-        return segment.memory.readWord(address - segment.start);
+        return segment.memory.readUint16(address - segment.start);
     }
 
-    writeWord(address, value) {
+    writeUint16(address, value) {
         this.doBreakPointCheck(address);
 
         const segment = this.getSegment(address);
@@ -130,10 +130,10 @@ class MMU {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);
         }
 
-        segment.memory.writeWord(address - segment.start, value);
+        segment.memory.writeUint16(address - segment.start, value);
     }
 
-    readDword(address) {
+    readUint32(address) {
         this.doBreakPointCheck(address);
 
         const segment = this.getSegment(address);
@@ -141,11 +141,11 @@ class MMU {
             throw new Error(`No read permission for address: 0x${address.toString(16)}`);
         }
 
-        return segment.memory.readDword(address - segment.start);
+        return segment.memory.readUint32(address - segment.start);
     }
 
 
-    writeDword(address, value) {
+    writeUint32(address, value) {
         this.doBreakPointCheck(address);
 
         const segment = this.getSegment(address);
@@ -153,7 +153,7 @@ class MMU {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);
         }
 
-        segment.memory.writeDword(address - segment.start, value);
+        segment.memory.writeUint32(address - segment.start, value);
     }
 
 
