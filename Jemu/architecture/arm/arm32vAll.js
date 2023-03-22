@@ -93,32 +93,26 @@ function ARM_EmulateSUBorADRorSUBS(core, memory, opcode, decoded) {
     core.registers[decoded.Rd] = result;
 }
 
+// @ 0xe59f12c4 (arm) as 'LDR<c> <Rt>, <label>,LDR<c> <Rt>, [PC, #-0]' with {"cond":14,"static0":2,"P":1,"U":1,"static1":0,"W":0,"static2":31,"Rt":1,"imm12":708}
 function ARM_EmulateLDRImm(core, memory, opcode, decoded) {
     var t = decoded.Rt;
-    var n = decoded.Rn;
     var imm32 = decoded.imm12;
-    var index = decoded.P === 1;
     var add = decoded.U === 1;
-    var wback = decoded.P === 0 || decoded.W === 1;
 
-    if (wback && n === t) {
-        throw new Error("Unpredictable instruction");
-    }
+    // The base register is the program counter (PC)
+    var n = 15;
 
     var address;
     var Rn_value = GetRegister(core, n);
-    if (index) {
-        address = add ? (Rn_value + imm32) : (Rn_value - imm32);
-    } else {
-        address = Rn_value;
-    }
+
+    // Since it's PC-relative, align the PC value to a 4-byte boundary before the calculation
+    Rn_value = Rn_value & 0xFFFFFFFC;
+
+    address = add ? (Rn_value + imm32) : (Rn_value - imm32);
 
     core.registers[t] = memory.readDword(address);
 
-    if (wback) {
-        core.registers[n] = address;
-    }
-
+    // Increment the program counter (core.PC) by 4
     core.PC += 4;
 }
 
@@ -183,7 +177,7 @@ function ARM_EmulateORRRegConst(core, memory, opcode, decoded) {
 // 11101110001011110010111100010010
 function ARM_EmulateMRC(core, memory, opcode, decoded) {
     var cp = core.coprocessors[decoded.coproc];
-    core.registers[decoded.Rt] = cp.handle(decoded);
+    core.registers[decoded.Rt] = cp.handle(core, memory, opcode, decoded);
     core.PC += 4;
 }
 
@@ -191,12 +185,12 @@ function ARM_EmulateMRC(core, memory, opcode, decoded) {
 arm_handlers = [
     { encoding:"arm", instruction:"B<c> <label>", handler:ARM_EmulateB},
     { encoding:"arm", instruction:"SUB{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateSUBorADRorSUBS},
-    { encoding:"arm", instruction:"LDR<c> <Rt>, [<Rn>{, #+/-<imm12>}]", handler : ARM_EmulateLDRImm},
+    { encoding:"arm", instruction:"LDR<c> <Rt>, <label>", handler : ARM_EmulateLDRImm},
     { encoding:"arm", instruction:"CMP<c> <Rn>, <Rm>{, <shift>}", handler : ARM_EmulateCMPReg},
     { encoding:"arm", instruction:"BL<c> <label>", handler:ARM_EmulateBLLabel},
     { encoding:"arm", instruction:"MOV{S}<c> <Rd>, #<const>", handler:ARM_EmulateMovRegConst},
     { encoding:"arm", instruction:"ORR{S}<c> <Rd>, <Rn>, #<const>", handler:ARM_EmulateORRRegConst},
-    { encoding:"arm", instruction:"MRC<c> <coproc>, <opc1>, <Rt>, <CRn>, <CRm>{, <opc2>}", handler: ARM_EmulateMRC}
+    { encoding:"arm", instruction:"MCR<c> <coproc>, <opc1>, <Rt>, <CRn>, <CRm>{, <opc2>}", handler: ARM_EmulateMRC}
 ]
 
 
