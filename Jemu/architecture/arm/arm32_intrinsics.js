@@ -1,82 +1,4 @@
 
-function LSL_C(x, shift) {
-    const extended_x = (x << shift) >>> 0;
-    const result = extended_x & ((1 << 32) - 1);
-    const carry_out = (extended_x & (1 << 32)) !== 0;
-    return [result, carry_out];
-}
-
-function LSL(x, shift) {
-    if (shift === 0) {
-        return x;
-    } else {
-        const [result, _] = LSL_C(x, shift);
-        return result;
-    }
-}
-
-function LSR_C(x, shift) {
-        const result = x >>> shift;
-        const carry_out = (x & (1 << (shift - 1))) !== 0;
-        return [result, carry_out];
-}
-
-function LSR(x, shift) {
-    if (shift === 0) {
-        return x;
-    } else {
-        const [result, _] = LSR_C(x, shift);
-        return result;
-    }
-}
-
-function ASR_C(x, shift) {
-    const result = x >> shift;
-    const carry_out = (x & (1 << (shift - 1))) !== 0;
-    return [result, carry_out];
-}
-
-function ASR(x, shift) {
-    if (shift === 0) {
-        return x;
-    } else {
-        const [result, _] = ASR_C(x, shift);
-        return result;
-    }
-}
-
-function ROR_C(x, shift) {
-    const m = shift % 32;
-    const result = (x >>> m) | ((x << (32 - m)) >>> 0);
-    const carry_out = (result & (1 << 31)) !== 0;
-    return [result, carry_out];
-}
-
-function ROR(x, shift) {
-    if (shift === 0) {
-        return x;
-    } else {
-        const [result, _] = ROR_C(x, shift);
-        return result;
-    }
-}
-
-function RRX_C(x, carry_in) {
-    const result = (carry_in << 31) | (x >>> 1);
-    const carry_out = (x & 1) !== 0;
-    return [result, carry_out];
-}
-
-function RRX(x, carry_in) {
-    const [result, _] = RRX_C(x, carry_in);
-    return result;
-}
-
-/*function ARMExpandImm(imm12) {
-    var [imm32, _] = ARMExpandImm_C(imm12, 0); // You can use 0 or core.flags.C as carry_in depending on the situation.
-    return imm32;
-}*/
-
 function ARMExpandImm(imm12) {
     const unrotated_value = (imm12 & 0xFF) >>> 0;
     const imm32_amount = 2 * ((imm12 >>> 8) & 0xF);
@@ -90,7 +12,6 @@ function SignExtend(value, currentWidth, desiredWidth=32) {
 }
     
 
-
 function BranchWritePC(core, address) {
     if (address & 1) {
         core.mode = 'thumb';
@@ -99,173 +20,139 @@ function BranchWritePC(core, address) {
         core.mode = 'arm';
         core.PC = address & ~3; // Clear the two least significant bits
     }
- /*   if (core.mode === 'arm') {
-        core.PC = address & 0xFFFFFFFC; 
-    } else  {
-        core.PC = (address & 0xFFFFFFFE) | 1;  // Gpt setting least sign 1 to indicate thumb mode
-    }*/
-}
-
-function ZeroExtend(value, width) {
-    return value & ((1 << width) - 1);
-}
-
-function UInt(bits) {
-    return parseInt(bits, 2);
 }
 
 
-function Shift_C(value, type, amount, carry_in) {
-    var result, carry_out;
-    if (amount === 0) {
-        result = value;
-        carry_out = carry_in;
-    } else {
-        switch (type) {
-            case "SRType_LSL":
-                [result, carry_out] = LSL_C(value, amount);
-                break;
-            case "SRType_LSR":
-                [result, carry_out] = LSR_C(value, amount);
-                break;
-            case "SRType_ASR":
-                [result, carry_out] = ASR_C(value, amount);
-                break;
-            case "SRType_ROR":
-                [result, carry_out] = ROR_C(value, amount);
-                break;
-            case "SRType_RRX":
-                [result, carry_out] = RRX_C(value, carry_in);
-                break;
-            default:
-                throw new Error("Invalid shift type");
+function DecodeImmShift(type, imm5) {
+    var shiftName = ['LSL', 'LSR', 'ASR', 'ROR'];
+    var shiftType = shiftName[type];
+    var shiftValue = imm5;
+
+    if (type === 0 && imm5 === 0) {
+        shiftValue = 0;
+    } else if ((type === 1 || type === 2) && imm5 === 0) {
+        shiftValue = 32;
+    } else if (type === 3) {
+        if (imm5 === 0) {
+            shiftType = 'RRX';
+            shiftValue = 1;
+        } else {
+            shiftValue = imm5;
         }
     }
 
-    return {result:result, carry: carry_out};
+    return {
+        type: shiftType,
+        value: shiftValue
+    };
 }
 
-function DecodeImmShift(type, imm5) {
-    var shift_t, shift_n;
+function Shift_C(value, type, amount, carry_in) {
+    let carry_out;
+    let result;
+
+    if (amount === 0) {
+        return { result: value, carry_out: carry_in };
+    }
+
     switch (type) {
-        case 0:
-            shift_t = "SRType_LSL"; 
-            shift_n = UInt(imm5);
+        case 'LSL':
+            carry_out = (amount === 0) ? carry_in : (value >>> (32 - amount)) & 1;
+            result = value << amount;
             break;
-        case 1:
-            shift_t = "SRType_LSR"; 
-            shift_n = (imm5 == 0) ? 32 : UInt(imm5);
+
+        case 'LSR':
+            carry_out = (amount === 0) ? carry_in : (value >>> (amount - 1)) & 1;
+            result = value >>> amount;
             break;
-        case 2:
-            shift_t = "SRType_ASR"; 
-            shift_n =  (imm5 == 0) ? 32 : UInt(imm5);
+
+        case 'ASR':
+            carry_out = (amount === 0) ? carry_in : (value >> (amount - 1)) & 1;
+            result = value >> amount;
             break;
-        case 3:
-            shift_t = (imm5 == 0) ? "SRType_RRX" : "SRType_ROR";
-            shift_n = (imm5 == 0) ? 1 : Uint(imm5);
+
+        
+        case 'ROR':
+            amount %= 32;
+            if (amount === 0) {
+                carry_out = value >>> 31;
+            } else {
+                carry_out = (value >>> (amount - 1)) & 1;
+                result = (value >>> amount) | (value << (32 - amount));
+            }
             break;
+
+        case 'RRX':
+            carry_out = value & 1;
+            result = (value >>> 1) | (carry_in << 31);
+            break;
+    
+        default:
+            console.error('Invalid shift type:', type);
+            return { result: value, carry_out: 0 };
     }
-    return {type:shift_t, value:shift_n};
+    
+     return { result: result >>> 0, carry_out: carry_out };
 }
 
-function Shift_C_fast(shift_t, value, shift_n, carry_in) {
-    var result;
-    var carry_out;
-  
-    switch (shift_t) {
-      case SRType_LSL:
-        result = value << shift_n;
-        carry_out = value & (1 << (32 - shift_n));
-        break;
-      case SRType_LSR:
-        result = value >>> shift_n;
-        carry_out = value & (1 << (shift_n - 1));
-        break;
-      case SRType_ASR:
-        result = value >> shift_n;
-        carry_out = value & (1 << (shift_n - 1));
-        break;
-      case SRType_ROR:
-        result = (value >>> shift_n) | (value << (32 - shift_n));
-        carry_out = (value >>> (shift_n - 1)) & 1;
-        break;
-      case SRType_RRX:
-        result = (value >>> 1) | (carry_in << 31);
-        carry_out = value & 1;
-        break;
-      default:
-        throw new Error('Invalid shift type');
-    }
-  
-    return { result: result, carry_out: carry_out };
-  }
-
-  
-function DecodeRegShift(type) {
-   
-    switch (type) {
-      case '00':
-        return "SRType_LSL";
-        break;
-      case '01':
-        return "SRType_LSR";
-        break;
-      case '10':
-        return "SRType_ASR";
-        break;
-      case '11':
-        return "SRType_ROR";
-        break;
-    }
-  
-    throw new Error('Invalid shift type');
-}
-
-
-function ARMExpandImm_C(imm12, carry_in) {
-    const unrotated_value = ZeroExtend(imm12 & 0xFF, 32);
-    const imm32_amount = 2 * UInt((imm12 >>> 8).toString(2));
-    const [imm32, carry_out] = Shift_C(unrotated_value, "SRType_ROR", imm32_amount, carry_in);
-    return [imm32, carry_out];
-}
 
 function ConditionPassed(cond, flags) {
     let result;
-    switch (cond & 7) {
-      case 0: //"000": 
-        result = (flags.Z == 1);
-        break;
-      case 1: //"001":
-        result = (flags.C == 1);
-        break;
-      case 2: //"010":
-        result = (flags.N == 1);
-        break;
-      case 3: //"011":
-        result = (flags.V == 1);
-        break;
-      case 4: //"100":
-        result = (flags.C == 1) && (flags.Z == 0);
-        break;
-      case 5://"101":
-        result = (flags.N == flags.V);
-        break;
-      case 6://"110":
-        result = (flags.N == flags.V) && (flags.Z == 0);
-        break;
-      case 7://"111":
-        result = true;
-        break;
-      default:
-        result = false;
-        break;
+    switch (cond) {
+        case 0: // "0000": EQ (Equal)
+            result = (flags.Z == 1);
+            break;
+        case 1: // "0001": NE (Not Equal)
+            result = (flags.Z == 0);
+            break;
+        case 2: // "0010": CS / HS (Carry Set / Unsigned Higher or Same)
+            result = (flags.C == 1);
+            break;
+        case 3: // "0011": CC / LO (Carry Clear / Unsigned Lower)
+            result = (flags.C == 0);
+            break;
+        case 4: // "0100": MI (Minus / Negative)
+            result = (flags.N == 1);
+            break;
+        case 5: // "0101": PL (Plus / Positive or Zero)
+            result = (flags.N == 0);
+            break;
+        case 6: // "0110": VS (Overflow)
+            result = (flags.V == 1);
+            break;
+        case 7: // "0111": VC (No Overflow)
+            result = (flags.V == 0);
+            break;
+        case 8: // "1000": HI (Unsigned Higher)
+            result = (flags.C == 1) && (flags.Z == 0);
+            break;
+        case 9: // "1001": LS (Unsigned Lower or Same)
+            result = (flags.C == 0) || (flags.Z == 1);
+            break;
+        case 10: // "1010": GE (Signed Greater Than or Equal)
+            result = (flags.N == flags.V);
+            break;
+        case 11: // "1011": LT (Signed Less Than)
+            result = (flags.N != flags.V);
+            break;
+        case 12: // "1100": GT (Signed Greater Than)
+            result = (flags.Z == 0) && (flags.N == flags.V);
+            break;
+        case 13: // "1101": LE (Signed Less Than or Equal)
+            result = (flags.Z == 1) || (flags.N != flags.V);
+            break;
+        case 14: // "1110": AL (Always)
+            result = true;
+            break;
+        case 15: // "1111": NV (Never) - This condition is not used in ARM mode and should always return false.
+            result = false;
+            break;
+        default:
+            result = false;
+            break;
     }
-
-    if ((cond & 8) == 8 && cond != 15) {  //if (cond.charAt(0) == "1" && cond != "1111") {    
-      result = !result;
-    }
+    
     return result;
-  } 
+}
 
-
-module.exports={BranchWritePC, SignExtend, ARMExpandImm, DecodeRegShift, DecodeImmShift, ConditionPassed, RRX, RRX_C, ROR, ROR_C, ASR, ASR_C, LSR, LSR_C, LSL, LSL_C, ZeroExtend, UInt, ARMExpandImm_C, Shift_C};
+module.exports={BranchWritePC, SignExtend, ARMExpandImm, DecodeImmShift, ConditionPassed,  Shift_C};

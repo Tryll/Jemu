@@ -22,6 +22,23 @@
 
 const CoreBase = require("../../CoreBase.js");
 
+
+// Configure registers:
+class ARM32_CoProBank {
+  constructor() {
+    this.Map=[{ 
+        // Let's find the current mode, not by indexing registerBankMap but by bit checking mode property
+        mode: 0,
+        bank: new Uint32Array(34),
+        // the map indicates all values are active from the bank
+        map: [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+      }
+    ];
+  }
+}
+
+
+
 class SystemControlCoprocessor extends CoreBase {
     static RegisterMap = {
       "ID_PFR0": 0, "ID_PFR1": 1,"ID_DFR0": 2,"ID_AFR0": 3, "ID_MMFR0": 4,      "ID_MMFR1": 5,
@@ -33,7 +50,7 @@ class SystemControlCoprocessor extends CoreBase {
     };
   
     constructor(core, mmu) {
-      super (core.name+"_SysCoProc", {}, mmu, SystemControlCoprocessor.RegisterMap);
+      super (core.name+"_SysCoProc", {}, mmu, (new (ARM32_CoProBank)).Map);
       this.core=core;
     }
   

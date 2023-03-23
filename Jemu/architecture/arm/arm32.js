@@ -22,7 +22,7 @@
 
 const CoreBase = require("../../CoreBase.js");
 const [BitFields, BitSet,BitClear] = require("../../helpers/BitFields.js");
-const [SystemControlCoprocessor] = require ('./SystemControlCoProStub.js');
+const [SystemControlCoprocessor] = require ('./SystemControlCoproStub.js');
 
 var CPSR_FIELDS = {
   N: 31,
@@ -45,18 +45,90 @@ function unsigned(value) {
   return value >>> 0;
 }
 
+const ARM32_ProcessorMode = {
+  USER: 0,
+  FIQ: 1,
+  IRQ: 2,
+  SUPERVISOR: 3,
+  ABORT: 4,
+  UNDEFINED: 5,
+  SYSTEM: 6
+};
+
+// Configure registers:
+class ARM32_RegisterBankMap {
+  constructor() {
+    this.Map=[{ 
+        // Let's find the current mode, not by indexing registerBankMap but by bit checking mode property
+        mode: ARM32_ProcessorMode.USER | ARM32_ProcessorMode.SYSTEM,
+        bank: new Uint32Array(17),
+        // the map indicates all values are active from the bank
+        map: [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+      },
+      { // FIQ
+        mode: ARM32_ProcessorMode.FIQ,
+        bank: new Uint32Array(17),
+        // FIQ will have it's own R8-R14 and CPSR/Flags mapped to ARMContext id's like this:
+        map: [0,0,0,0,0,0,0,0,0,0,0,0,0, 1, 1, 0, 1]
+      },
+      { // IRQ
+        mode: ARM32_ProcessorMode.IRQ,
+        bank: new Uint32Array(17),
+        // IRQ, Supervisor,Abort and Undefined modes have R13,R14 and SPSR/flags
+        map: [0,0,0,0,0,0,0,0,0,0,0,0,0, 1, 1, 0, 1]
+      },
+      { // Supervisor
+        mode: ARM32_ProcessorMode.SUPERVISOR,
+        bank: new Uint32Array(17),
+        // IRQ, Supervisor,Abort and Undefined modes have R13,R14 and SPSR/flags
+        map: [0,0,0,0,0,0,0,0,0,0,0,0,0, 1, 1, 0, 1]
+      },
+      { // Abort
+        mode: ARM32_ProcessorMode.ABORT,
+        bank: new Uint32Array(17),
+        // IRQ, Supervisor,Abort and Undefined modes have R13,R14 and SPSR/flags
+        map: [0,0,0,0,0,0,0,0,0,0,0,0,0, 1, 1, 0, 1]
+      },
+      { // Undefined
+        mode: ARM32_ProcessorMode.UNDEFINED,
+        bank: new Uint32Array(17),
+        // IRQ, Supervisor,Abort and Undefined modes have R13,R14 and SPSR/flags
+        map: [0,0,0,0,0,0,0,0,0,0,0,0,0, 1, 1, 0, 1]
+      }
+    ];
+  }
+}
+
+
 
 class ARM32 extends CoreBase  {
+  
   static RegisterMap = {
     "R0":0, "R1":1, "R2":2, "R3":3, "R4":4, "R5":5, "R6":6, "R7":7,
     "R8":8, "R9":9, "R10":10, "R11":11, "R12":12, "SP":13, "LR":14, "PC":15,
     "CPSR":16
   };
+
   static ArmPipelineWidth = 8;
   static ThumbPipelineWidth = 4;
   
   constructor(name, platform, memory) {
-    super (name, platform, memory, ARM32.RegisterMap);
+    super (name, platform, memory, (new ARM32_RegisterBankMap()).Map);
+
+    // bind register properties to register values
+    for (const [key, value] of Object.entries(ARM32.RegisterMap)) {
+      Object.defineProperty(this, key, {
+        get: () => this.getRegister(value),
+        set: (newValue) => this.setRegister(value, newValue),
+        enumerable: true,
+        configurable: true
+      });
+    } 
+
+    // set initial values for PC and SP (they are binded)
+    this.SP=0;
+    this.PC=0;
+    this.CPSR = 0x400001D3;
 
     // initialize basic coprocessors
     this.coprocessors = new Array(16);
@@ -64,12 +136,7 @@ class ARM32 extends CoreBase  {
     
     // bind flags to register APSR (16)
     this.flags = BitFields.ByRef(this, "CPSR", CPSR_FIELDS);
-
-    // set initial values for PC and SP
-    this.SP=0;
-    this.PC=0;
-    this.CPSR = 0x400001D3;
-
+    
     this.mode="arm";
 
   }
@@ -82,6 +149,12 @@ class ARM32 extends CoreBase  {
     return (this.flags.T) ? "thumb" : "arm";
   }
 
+  getRegister(regId) {
+    if (regId===15) {
+        return super.getRegister(regId) + ((this.mode=='arm') ? ARM32.ArmPipelineWidth : ARM32.ThumbPipelineWidth);
+    }
+    return super.getRegister(regId);
+  }
 
   // Perform single Step: Evaluate Instruction
   step() {
@@ -130,25 +203,6 @@ class ARM32 extends CoreBase  {
     }
   }
 
-
-
-  // Barrel shift operation
-  barrelShift(value, shiftType, shiftAmount) {
-    switch (shiftType) {
-      case 0: // Logical left shift (LSL)
-        return value << shiftAmount;
-      case 1: // Logical right shift (LSR)
-        return value >>> shiftAmount;
-      case 2: // Arithmetic right shift (ASR)
-        return value >> shiftAmount;
-      case 3: // Rotate right (ROR)
-        return (value >>> shiftAmount) | (value << (32 - shiftAmount));
-      default:
-        throw new Error("Invalid shift type: " + shiftType);
-    }
-  }
-
- 
 }
 
 module.exports = ARM32;

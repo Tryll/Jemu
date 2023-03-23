@@ -152,7 +152,7 @@ class MMU {
         if (!segment.permissions.includes('w')) {
             throw new Error(`No write permission for address: 0x${address.toString(16)}`);
         }
-
+        console.log("writing to 0x"+(address-segment.start).toString(16)+" value 0x"+value.toString(16));
         segment.memory.writeUint32(address - segment.start, value);
     }
 

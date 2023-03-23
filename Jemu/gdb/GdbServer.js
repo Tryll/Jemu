@@ -98,10 +98,10 @@ class GdbServer {
     this.trace(`GeneralRegisters ${this.gdbThreadSelect}`, GdbServer.TRACE_COMMANDS);
     const cpu = this.machine.cores[this.gdbThreadSelect-1];
     let regdump = "";
-  
-    for (let i = 0; i < cpu.registers.length; i++) {
+    console.log("num regs "+cpu.numRegisters);
+    for (let i = 0; i < cpu.numRegisters; i++) {
       const buf = Buffer.alloc(4);
-      buf.writeUInt32LE(cpu.registers[i], 0);
+      buf.writeUInt32LE(cpu.getRegister(i), 0);
       regdump += buf.toString('hex').padStart(8, 0);
     }
   
@@ -117,10 +117,10 @@ class GdbServer {
       GdbProtocolBase.Send(socket, "00000000", "+");
       return;
     }
-  
+    
     const cpu = this.machine.cores[this.gdbThreadSelect - 1];
-    if (registerIndex >= 0 && registerIndex < cpu.registers.length) {
-      const registerValue = cpu.registers[registerIndex];
+    if (registerIndex >= 0 && registerIndex < cpu.numRegisters) {
+      const registerValue = cpu.getRegister(registerIndex);
       const buf = Buffer.alloc(4);
       buf.writeUInt32LE(registerValue, 0);
       const hexValue = buf.toString('hex').padStart(8, 0);
@@ -137,8 +137,8 @@ class GdbServer {
     this.trace(`WriteRegister ${registerIndex} value ${registerValue}`, GdbServer.TRACE_COMMANDS);
 
     const cpu = this.machine.cores[this.gdbThreadSelect - 1];
-    if (registerIndex >= 0 && registerIndex < cpu.registers.length) {
-      cpu.registers[registerIndex] = registerValue;
+    if (registerIndex >= 0 && registerIndex < cpu.numRegisters) {
+      cpu.setRegister(registerIndex, registerValue);
       GdbProtocolBase.Send(socket, "OK", "+");
     } else {
       GdbProtocolBase.Send(socket, "E01", "+"); // Send an error response
